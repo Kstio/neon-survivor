@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Survivor</title>
+    
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="xp-bar-container">
+        <div class="xp-bar-fill" id="xp-fill"></div>
+    </div>
+    
+    <div id="loot-indicators"></div>
+    
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="ui-layer">
+        <div class="hud-top">
+            <div class="stat-group">
+                <div class="stat-box">
+                    <div class="stat-label">УРОВЕНЬ</div>
+                    <div class="stat-val" id="level-display">1</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">СЧЁТ</div>
+                    <div class="stat-val" id="score-display">0</div>
+                </div>
+            </div>
+            
+            <button class="btn-small" id="btn-pause" style="pointer-events:auto;">ПАУЗА</button>
+            
+            <div class="stat-box">
+                <div class="stat-label">ВРЕМЯ</div>
+                <div class="stat-val" id="timer-display">00:00</div>
+            </div>
+        </div>
+
+        <div class="skills-hud">
+            <div class="skill-slot" id="skill-dash">
+                <div class="key-hint">SPACE</div>
+                <span class="skill-icon">⚡</span>
+                <div class="skill-cd-overlay" id="cd-dash" style="height:0"></div>
+            </div>
+            <div class="skill-slot" id="skill-emp">
+                <div class="key-hint">E</div>
+                <span class="skill-icon">☢️</span>
+                <div class="skill-cd-overlay" id="cd-emp" style="height:0"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="overlay-screen">
+        <h1>Neon Survivor</h1>
+        <p>Новые враги обнаружены.<br>Щит теперь взрывается при разрушении.<br>Авто-лечение при максимальном уровне.</p>
+        <div style="width: 250px; display:flex; flex-direction:column; gap:10px">
+            <button class="btn-primary" id="start-btn" style="pointer-events:auto">НАЧАТЬ МИССИЮ</button>
+            <button class="btn-secondary" id="open-shop-btn" style="pointer-events:auto">МАГАЗИН</button>
+        </div>
+        <p id="death-report" style="color:#ff0055; margin-top:25px; white-space:pre-line; font-size: 18px; text-shadow: 0 0 10px #ff0055;"></p>
+    </div>
+
+    <div id="shop-screen" class="hidden">
+        <h2>МАГАЗИН</h2>
+        <div class="shop-balance">ЧИПЫ: <span id="meta-currency" style="color:#ffd700">0</span></div>
+        <div class="card-container" id="shop-container">
+        </div>
+        <div style="margin-top:30px; width: 200px;">
+            <button class="btn-primary" id="close-shop-btn" style="pointer-events:auto">НАЗАД</button>
+        </div>
+    </div>
+
+    <div id="levelup-screen" class="hidden">
+        <h2>СИСТЕМА ОБНОВЛЕНА</h2>
+        <div id="sys-msg" style="color:#aaa; margin-bottom:20px">ВЫБЕРИТЕ МОДУЛЬ ДЛЯ УСТАНОВКИ</div>
+        <div class="card-container" id="cards-box"></div>
+    </div>
+
+    <div id="pause-menu" class="hidden">
+        <h2>ПАУЗА</h2>
+        <div id="stats-list"></div>
+        <div style="width: 200px;">
+            <button class="btn-primary" id="resume-btn" style="pointer-events:auto">ПРОДОЛЖИТЬ</button>
+        </div>
+    </div>
+
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>
