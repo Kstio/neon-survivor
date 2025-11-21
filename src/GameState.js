@@ -4,6 +4,7 @@ export const state = {
     bullets: [],
     enemyBullets: [],
     gems: [],
+    chips: [],
     particles: [],
     texts: [],
     obstacles: [],
@@ -24,6 +25,7 @@ export function resetGameState() {
     state.bullets = [];
     state.enemyBullets = [];
     state.gems = [];
+    state.chips = [];
     state.particles = [];
     state.texts = [];
     state.obstacles = [];

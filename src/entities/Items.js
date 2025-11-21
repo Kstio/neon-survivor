@@ -2,11 +2,13 @@ import { state } from '../GameState.js';
 import { SCREEN_W, SCREEN_H } from '../constants.js';
 
 export class Obstacle {
-    constructor(x, y, w, h) {
+    constructor(x, y, w, h, color = '#112', borderColor = '#0ff') {
         this.x = x;
         this.y = y;
         this.w = w;
         this.h = h;
+        this.color = color;
+        this.borderColor = borderColor;
     }
 
     draw(ctx) {
@@ -14,14 +16,16 @@ export class Obstacle {
         const sy = this.y - state.camera.y;
         if (sx + this.w < 0 || sx > SCREEN_W() || sy + this.h < 0 || sy > SCREEN_H()) return;
 
-        ctx.fillStyle = '#112';
+        ctx.fillStyle = this.color;
         ctx.fillRect(sx, sy, this.w, this.h);
-        ctx.strokeStyle = '#0ff';
+        
+        ctx.strokeStyle = this.borderColor;
         ctx.lineWidth = 2;
         ctx.strokeRect(sx, sy, this.w, this.h);
-        ctx.globalAlpha = 0.08;
-        ctx.fillStyle = '#0ff';
-        ctx.fillRect(sx + 4, sy + 4, this.w - 8, this.h - 8);
+        
+        ctx.globalAlpha = 0.2;
+        ctx.fillStyle = '#000';
+        ctx.fillRect(sx + 5, sy + 5, this.w - 10, this.h - 10);
         ctx.globalAlpha = 1;
     }
 }
@@ -111,5 +115,30 @@ export class Mine {
         ctx.beginPath();
         ctx.arc(sx, sy, 10, 0, Math.PI * 2);
         ctx.stroke();
+    }
+}
+
+export class Chip {
+    constructor(x, y, val) {
+        this.x = x;
+        this.y = y;
+        this.val = val;
+        this.mag = false;
+    }
+
+    draw(ctx) {
+        const sx = this.x - state.camera.x;
+        const sy = this.y - state.camera.y;
+        if (sx < -20 || sx > SCREEN_W() + 20 || sy < -20 || sy > SCREEN_H() + 20) return;
+
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(state.frameCount * 0.1);
+        ctx.fillStyle = '#ffd700';
+        ctx.fillRect(-4, -4, 8, 8);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-4, -4, 8, 8);
+        ctx.restore();
     }
 }

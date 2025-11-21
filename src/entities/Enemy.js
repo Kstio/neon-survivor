@@ -2,8 +2,10 @@ import { state } from '../GameState.js';
 import { checkWall, calcDmg } from '../utils.js';
 import { Bullet } from './Bullet.js';
 import { FloatText, Particle } from './Particle.js';
-import { SkillCrate } from './Items.js';
+import { SkillCrate, Chip } from './Items.js';
 import { SCREEN_W, SCREEN_H } from '../constants.js';
+import { playSound } from '../sounds.js';
+import { Meta } from '../MetaGame.js';
 
 export class Enemy {
     constructor(type, x, y) {
@@ -39,63 +41,105 @@ export class Enemy {
 
     update() {
         if (this.attackCd > 0) this.attackCd--;
-
         if (!state.player) return;
 
-        const dx = state.player.x - this.x;
-        const dy = state.player.y - this.y;
-        const dist = Math.hypot(dx, dy);
-        const angle = Math.atan2(dy, dx);
+        let dx = state.player.x - this.x;
+        let dy = state.player.y - this.y;
+        const distToPlayer = Math.hypot(dx, dy);
+        
+        if (distToPlayer > 0) {
+            dx /= distToPlayer;
+            dy /= distToPlayer;
+        }
 
-        this.x += this.pushX;
-        this.y += this.pushY;
-        this.pushX *= 0.8;
-        this.pushY *= 0.8;
+        let repX = 0, repY = 0;
+        const neighborsCheckCount = 5; 
+        for(let i=0; i<neighborsCheckCount; i++) {
+            const other = state.enemies[Math.floor(Math.random() * state.enemies.length)];
+            if(other && other !== this && !other.isDead) {
+                const dist = Math.hypot(this.x - other.x, this.y - other.y);
+                const minDist = this.size + other.size;
+                if (dist < minDist && dist > 0) {
+                    const pushForce = (minDist - dist) / minDist;
+                    repX += (this.x - other.x) / dist * pushForce;
+                    repY += (this.y - other.y) / dist * pushForce;
+                }
+            }
+        }
+        dx += repX * 1.2; 
+        dy += repY * 1.2;
+
+        const finalDist = Math.hypot(dx, dy) || 1;
+        dx /= finalDist;
+        dy /= finalDist;
 
         if (this.type === 'dasher') {
             this.dashTimer++;
             if (this.dashTimer > 120) {
                 this.speed = this.baseSpeed * 4;
                 if (this.dashTimer > 140) this.dashTimer = 0;
-            } else {
-                this.speed = this.baseSpeed;
-            }
+            } else this.speed = this.baseSpeed;
         } else {
             this.speed = this.baseSpeed * this.speedMult;
         }
         this.speedMult = 1;
 
+        let vx = dx * this.speed;
+        let vy = dy * this.speed;
+
         if (this.type === 'shooter') {
-            if (dist > 350) {
-                this.x += Math.cos(angle) * this.speed;
-                this.y += Math.sin(angle) * this.speed;
-            } else if (dist < 200) {
-                this.x -= Math.cos(angle) * (this.speed * 0.5);
-                this.y -= Math.sin(angle) * (this.speed * 0.5);
-            }
             this.shootTimer++;
+            if (distToPlayer < 200) { vx = -dx * this.speed * 0.8; vy = -dy * this.speed * 0.8; }
+            else if (distToPlayer > 350) {  }
+            else { vx = 0; vy = 0; } 
+
             if (this.shootTimer > 140) {
-                state.enemyBullets.push(new Bullet(this.x, this.y, angle, this.dmg, 6, false));
+                const angleToPlayer = Math.atan2(state.player.y - this.y, state.player.x - this.x);
+                state.enemyBullets.push(new Bullet(this.x, this.y, angleToPlayer, this.dmg, 6, false));
                 this.shootTimer = 0;
             }
-        } else {
-            this.x += Math.cos(angle) * this.speed;
-            this.y += Math.sin(angle) * this.speed;
+        }
 
-            if (dist < this.size + state.player.r) {
-                if (this.attackCd <= 0) {
-                    state.player.takeDamage(this.dmg);
-                    this.attackCd = 60;
-                    if (this.type === 'kamikaze') this.takeDamage(9999, false);
-                    this.pushX = -Math.cos(angle) * 10;
-                    this.pushY = -Math.sin(angle) * 10;
+        vx += this.pushX; vy += this.pushY;
+        this.pushX *= 0.8; this.pushY *= 0.8;
+
+        let nextX = this.x + vx;
+        let moveX = true;
+        
+        if (checkWall(nextX, this.y, this.size)) {
+            moveX = false; 
+            if (Math.abs(vy) < this.speed * 0.5) {
+                const slideDir = (state.player.y > this.y) ? 1 : -1;
+                vy = slideDir * this.speed;
+            }
+        }
+
+        let nextY = this.y + vy;
+        let moveY = true;
+
+        if (checkWall(this.x, nextY, this.size)) {
+            moveY = false;
+            if (Math.abs(vx) < this.speed * 0.5) {
+                const slideDir = (state.player.x > this.x) ? 1 : -1;
+                vx = slideDir * this.speed;
+                if (!checkWall(this.x + vx, this.y, this.size)) {
+                    moveX = true;
                 }
             }
         }
 
-        if (checkWall(this.x, this.y, this.size)) {
-            this.x -= Math.cos(angle) * this.speed * 1.5;
-            this.y -= Math.sin(angle) * this.speed * 1.5;
+        if (moveX) this.x += vx;
+        if (moveY) this.y += vy;
+
+        if (distToPlayer < this.size + state.player.r) {
+            if (this.attackCd <= 0) {
+                state.player.takeDamage(this.dmg);
+                this.attackCd = 60;
+                if (this.type === 'kamikaze') this.takeDamage(9999, false);
+                const angle = Math.atan2(state.player.y - this.y, state.player.x - this.x);
+                this.pushX = -Math.cos(angle) * 10;
+                this.pushY = -Math.sin(angle) * 10;
+            }
         }
     }
 
@@ -119,11 +163,19 @@ export class Enemy {
             if (state.player && Math.random() < state.player.stats.vampChance) {
                 state.player.heal(5);
             }
+
             for (let i = 0; i < 6; i++) {
                 state.particles.push(new Particle(this.x, this.y, this.color, 2 + Math.random() * 2));
             }
 
             state.gems.push({ x: this.x, y: this.y, val: this.xp, mag: false });
+
+            const greedBonus = Meta.getUpgradeValue('startGreed') || 0;
+            if (Math.random() < (0.05 + greedBonus)) {
+                let val = 1;
+                if (this.type === 'titan' || this.type === 'tank') val = 10;
+                state.chips.push(new Chip(this.x, this.y, val));
+            }
 
             if (Math.random() < 0.005) {
                 state.skillCrates.push(new SkillCrate(this.x, this.y));
@@ -133,9 +185,7 @@ export class Enemy {
             if (state.player && state.player.getSkillLvl('boom') > 0) {
                 const boomLvl = state.player.getSkillLvl('boom');
                 const range = boomLvl >= 3 ? 200 : 120;
-                
                 for(let i=0; i<10; i++) state.particles.push(new Particle(this.x, this.y, '#ff0000', 3));
-
                 const boomBase = (state.player.lvl * 5) + (boomLvl * 20);
                 state.enemies.forEach(e => {
                     if (e !== this && !e.isDead && Math.hypot(e.x - this.x, e.y - this.y) < range) {

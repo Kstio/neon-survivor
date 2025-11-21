@@ -4,6 +4,8 @@ import { clamp, checkWall, calcDmg, findNearestEnemies } from '../utils.js';
 import { Bullet } from './Bullet.js';
 import { FloatText, Particle } from './Particle.js';
 import { Mine } from './Items.js';
+import { playSound } from '../sounds.js';
+import { Meta } from '../MetaGame.js';
 
 export class Player {
     constructor() {
@@ -11,8 +13,13 @@ export class Player {
         this.y = WORLD_SIZE / 2;
         this.r = 15;
         this.color = '#00ffff';
-        this.maxHp = 100;
-        this.hp = 100;
+
+        const extraHp = Meta.getUpgradeValue('startHp') || 0;
+        const dmgMultBonus = Meta.getUpgradeValue('startDmg') || 1;
+
+        this.maxHp = 100 + extraHp;
+        this.hp = this.maxHp;
+
         this.baseSpeed = 5;
         this.speed = 5;
         
@@ -25,7 +32,8 @@ export class Player {
         
         this.skills = {};
         this.stats = {
-            dmgMult: 1, fireRateMult: 1, bulletCount: 1, spread: 0.12, bulletSpdMult: 1,
+            dmgMult: 1 * dmgMultBonus, 
+            fireRateMult: 1, bulletCount: 1, spread: 0.12, bulletSpdMult: 1,
             critChance: 0, dodge: 0, thorns: 0, regen: 0, magnet: 120, expMult: 1,
             vampChance: 0, shieldMax: 0, shieldTimer: 0, pierce: 0, ricochet: 0
         };
@@ -175,6 +183,8 @@ export class Player {
         const dmgBase = this.dmg;
         const spd = this.bulletSpeed * this.stats.bulletSpdMult;
 
+        playSound('laser');
+
         for (let i = 0; i < cnt; i++) {
             const d = calcDmg(dmgBase, this.stats);
             state.bullets.push(new Bullet(this.x, this.y, startA + i * spread, d.val, spd, true, d.isCrit));
@@ -213,6 +223,8 @@ export class Player {
 
             state.texts.push(new FloatText(this.x, this.y - 50, 'SHIELD BLAST!', '#00ffff', 18));
             this.spawnParticles('#00ffff', 20);
+            
+            playSound('hit');
             return;
         }
 
@@ -253,11 +265,15 @@ export class Player {
         if (this.xp >= this.nextXp) {
             const event = new CustomEvent('level-up');
             window.dispatchEvent(event);
+            playSound('powerUp')
         }
+        playSound('levelup')
     }
     
     recalcStats(){ 
-        this.stats.dmgMult = 1 + (this.getSkillLvl('dmg')*0.2); 
+        const baseDmgBonus = Meta.getUpgradeValue('startDmg') || 1;
+        this.stats.dmgMult = baseDmgBonus + (this.getSkillLvl('dmg')*0.2); 
+
         this.stats.fireRateMult = Math.pow(0.85,this.getSkillLvl('spd')); 
         this.stats.bulletCount = 1 + this.getSkillLvl('multi'); 
         this.stats.bulletSpdMult = 1 + (this.getSkillLvl('sniper')*0.25); 
@@ -300,6 +316,7 @@ export class Player {
             }
         }); 
         state.texts.push(new FloatText(this.x,this.y-60,'ЭМИ УДАР!','#0ff'));
+        playSound('explosion');
     }
 
     draw(ctx) {

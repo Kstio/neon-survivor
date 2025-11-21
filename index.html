@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neon Survivor: Advanced Warfare</title>
+    <title>Neon Survivor</title>
     
     <link rel="stylesheet" href="css/style.css">
 </head>
@@ -54,10 +54,21 @@
     <div id="overlay-screen">
         <h1>Neon Survivor</h1>
         <p>Новые враги обнаружены.<br>Щит теперь взрывается при разрушении.<br>Авто-лечение при максимальном уровне.</p>
-        <div style="width: 250px;">
+        <div style="width: 250px; display:flex; flex-direction:column; gap:10px">
             <button class="btn-primary" id="start-btn" style="pointer-events:auto">НАЧАТЬ МИССИЮ</button>
+            <button class="btn-secondary" id="open-shop-btn" style="pointer-events:auto">МАГАЗИН</button>
         </div>
         <p id="death-report" style="color:#ff0055; margin-top:25px; white-space:pre-line; font-size: 18px; text-shadow: 0 0 10px #ff0055;"></p>
+    </div>
+
+    <div id="shop-screen" class="hidden">
+        <h2>МАГАЗИН</h2>
+        <div class="shop-balance">ЧИПЫ: <span id="meta-currency" style="color:#ffd700">0</span></div>
+        <div class="card-container" id="shop-container">
+        </div>
+        <div style="margin-top:30px; width: 200px;">
+            <button class="btn-primary" id="close-shop-btn" style="pointer-events:auto">НАЗАД</button>
+        </div>
     </div>
 
     <div id="levelup-screen" class="hidden">

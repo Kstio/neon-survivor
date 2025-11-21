@@ -6,8 +6,22 @@ export function clamp(v, a, b) {
 
 export function checkWall(x, y, r) {
     if (!state.obstacles) return false;
-    for (const o of state.obstacles) {
-        if (x + r > o.x && x - r < o.x + o.w && y + r > o.y && y - r < o.y + o.h) {
+    
+    for (let i = 0; i < state.obstacles.length; i++) {
+        const o = state.obstacles[i];
+        
+        if (x + r < o.x || x - r > o.x + o.w || y + r < o.y || y - r > o.y + o.h) {
+            continue;
+        }
+
+        const closestX = clamp(x, o.x, o.x + o.w);
+        const closestY = clamp(y, o.y, o.y + o.h);
+
+        const distanceX = x - closestX;
+        const distanceY = y - closestY;
+
+        const distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+        if (distanceSquared < (r * r)) {
             return true;
         }
     }

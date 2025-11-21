@@ -2,11 +2,13 @@ import { state, resetGameState } from './GameState.js';
 import { WORLD_SIZE, SCREEN_W, SCREEN_H, SKILL_DB } from './constants.js';
 import { clamp, checkWall } from './utils.js';
 import { updateUI, updateIndicators, renderStats } from './ui.js';
-
+import { generateWorld } from './MapGenerator.js';
 import { Player } from './entities/Player.js';
 import { Enemy } from './entities/Enemy.js';
 import { Obstacle, LootCrate, SkillCrate, Mine } from './entities/Items.js';
 import { FloatText, Particle } from './entities/Particle.js';
+import { loadSounds, playSound } from './sounds.js';
+import { Meta, UPGRADES } from './MetaGame.js';
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -16,21 +18,19 @@ const keys = { w: false, a: false, s: false, d: false };
 const mouse = { x: 0, y: 0, active: false };
 
 function init() {
+    loadSounds();
+    Meta.load();
+
     resetGameState();
     
-    for (let i = 0; i < 30; i++) {
-        let w = 80 + Math.random() * 180;
-        let h = 80 + Math.random() * 180;
-        let x = Math.random() * (WORLD_SIZE - w);
-        let y = Math.random() * (WORLD_SIZE - h);
-        if (Math.hypot(x - WORLD_SIZE / 2, y - WORLD_SIZE / 2) > 450) {
-            state.obstacles.push(new Obstacle(x, y, w, h));
-        }
-    }
+    state.obstacles = generateWorld();
 
     state.player = new Player();
+    
     spawnCrate();
     spawnCrate();
+    spawnRandomSkillCrateOnMap();
+    
     updateUI();
 }
 
@@ -56,15 +56,15 @@ function gameLoop() {
 
     spawnEnemies();
 
-
     for (let i = state.crates.length - 1; i >= 0; i--) {
         let c = state.crates[i];
         c.draw(ctx);
         if (Math.hypot(state.player.x - c.x, state.player.y - c.y) < state.player.r + 30) {
             state.player.hp = Math.min(state.player.maxHp, state.player.hp + 50);
             state.player.gainXp(150);
+            playSound('powerUp');
             state.texts.push(new FloatText(state.player.x, state.player.y, 'ЛЕЧЕНИЕ!', '#0f0'));
-            state.particles.push(new Particle(c.x, c.y, '#0f0', 14)); // Упростили создание частиц
+            state.particles.push(new Particle(c.x, c.y, '#0f0', 14));
             state.crates.splice(i, 1);
         }
     }
@@ -74,6 +74,7 @@ function gameLoop() {
         s.draw(ctx);
         if (Math.hypot(state.player.x - s.x, state.player.y - s.y) < state.player.r + 30) {
             state.skillCrates.splice(i, 1);
+            playSound('powerUp');
             pauseGameForSkillBox();
             return; 
         }
@@ -85,13 +86,13 @@ function gameLoop() {
             let triggered = false;
             state.enemies.forEach(e => {
                 if (!e.isDead && Math.hypot(e.x - o.x, e.y - o.y) < o.range) {
-
                     const dmg = 30 + (o.lvl || 1) * 15;
                     e.takeDamage(dmg, false);
                     triggered = true;
                 }
             });
             if (triggered) {
+                playSound('explosion');
                 for(let k=0; k<10; k++) state.particles.push(new Particle(o.x, o.y, '#f00', 3));
                 return false;
             }
@@ -138,6 +139,7 @@ function gameLoop() {
         }
         if (Math.hypot(state.player.x - b.x, state.player.y - b.y) < state.player.r + 5) {
             state.player.takeDamage(10);
+            playSound('hit');
             state.enemyBullets.splice(i, 1);
         }
     }
@@ -147,6 +149,28 @@ function gameLoop() {
         e.draw(ctx);
         return !e.isDead;
     });
+
+    if (state.chips) {
+        for (let i = state.chips.length - 1; i >= 0; i--) {
+            let c = state.chips[i];
+            const d = Math.hypot(state.player.x - c.x, state.player.y - c.y);
+            
+            if (d < state.player.stats.magnet) c.mag = true;
+            if (c.mag) {
+                c.x += (state.player.x - c.x) * 0.15;
+                c.y += (state.player.y - c.y) * 0.15;
+            }
+
+            if (d < state.player.r) {
+                Meta.addCurrency(c.val);
+                state.texts.push(new FloatText(state.player.x, state.player.y - 20, `+$${c.val}`, '#ffd700'));
+                playSound('powerUp');
+                state.chips.splice(i, 1);
+            } else {
+                c.draw(ctx);
+            }
+        }
+    }
 
     if (state.gems.length > 300) state.gems.splice(0, 50);
     for (let i = state.gems.length - 1; i >= 0; i--) {
@@ -183,9 +207,21 @@ function gameLoop() {
     }
 }
 
-
 function drawGrid() {
-    ctx.strokeStyle = '#111';
+    const half = WORLD_SIZE / 2;
+    const px = state.player.x;
+    const py = state.player.y;
+    
+    let gridColor = '#111';
+    if (px < half && py < half) gridColor = '#001133';
+    else if (px >= half && py < half) gridColor = '#1a1a00';
+    else if (px < half && py >= half) gridColor = '#1a0d05';
+    else gridColor = '#1a0000';
+
+    ctx.fillStyle = gridColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = '#222';
     ctx.lineWidth = 1;
     const ox = state.camera.x % 100;
     const oy = state.camera.y % 100;
@@ -283,6 +319,7 @@ function pauseGameForSkillBox() {
 }
 
 function handleLevelUp() {
+    playSound('levelup');
     if (animationId) cancelAnimationFrame(animationId);
     state.isPaused = true;
     
@@ -359,10 +396,57 @@ function gameOver() {
     const phrases = ['СИГНАЛ ПОТЕРЯН', 'КРИТИЧЕСКИЙ СБОЙ', 'СИСТЕМА ОФФЛАЙН'];
     document.getElementById('death-report').innerText = `${phrases[Math.floor(Math.random() * phrases.length)]}
     Выживание: ${new Date(state.gameTime * 1000).toISOString().substr(14, 5)}
-    Уровень: ${state.player.lvl}`;
+    Уровень: ${state.player.lvl}
+    Заработано чипов: ${Math.floor(state.score / 10) }`;
+    
     document.querySelector('#overlay-screen h1').innerText = 'ИГРА ОКОНЧЕНА';
     document.getElementById('start-btn').innerText = 'ПЕРЕЗАГРУЗКА';
+    document.getElementById('open-shop-btn').classList.remove('hidden');
 }
+
+function openShop() {
+    const shopScreen = document.getElementById('shop-screen');
+    const container = document.getElementById('shop-container');
+    
+    shopScreen.classList.remove('hidden');
+    document.getElementById('overlay-screen').classList.add('hidden');
+    Meta.updateUI();
+
+    container.innerHTML = '';
+    Object.values(UPGRADES).forEach(upg => {
+        const lvl = Meta.data.upgrades[upg.id];
+        const cost = Meta.getUpgradeCost(upg.id);
+        
+        const div = document.createElement('div');
+        div.className = 'shop-card';
+        div.innerHTML = `
+            <h3>${upg.name} (Lvl ${lvl})</h3>
+            <div class="desc">${upg.desc}</div>
+            <div class="cost" style="color:${cost === 'MAX' ? '#f00' : '#ffd700'}">
+                Цена: ${cost === 'MAX' ? 'MAX' : cost + ' $'}
+            </div>
+            ${cost !== 'MAX' ? `<button class="shop-btn" data-id="${upg.id}">КУПИТЬ</button>` : ''}
+        `;
+        container.appendChild(div);
+    });
+
+    container.querySelectorAll('.shop-btn').forEach(btn => {
+        btn.onclick = () => {
+            const id = btn.getAttribute('data-id');
+            if (Meta.buyUpgrade(id)) {
+                openShop();
+                playSound('powerUp');
+            } else {
+            }
+        };
+    });
+}
+
+document.getElementById('open-shop-btn').onclick = openShop;
+document.getElementById('close-shop-btn').onclick = () => {
+    document.getElementById('shop-screen').classList.add('hidden');
+    document.getElementById('overlay-screen').classList.remove('hidden');
+};
 
 window.addEventListener('keydown', e => {
     if (e.code === 'KeyW') keys.w = true;
@@ -407,3 +491,5 @@ document.getElementById('start-btn').onclick = () => {
 
 document.getElementById('btn-pause').onclick = togglePause;
 document.getElementById('resume-btn').onclick = togglePause;
+
+Meta.load();
