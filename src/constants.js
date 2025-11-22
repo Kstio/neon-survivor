@@ -24,7 +24,7 @@ export const SKILL_DB = {
     spd: { name: "Скорострельность", desc: "Задержка -15%", max: 10, type: "passive" },
     sniper: { name: "Снайпер", desc: "Скорость пуль +25%", max: 5, type: "passive" },
     crit: { name: "Крит. Модуль", desc: "Шанс крита +10%", max: 5, type: "passive", evolveAt: 3, evoDesc: "Смертельные удары" },
-    hp: { name: "Нано-Броня", desc: "Макс HP +50", max: 10, type: "passive" },
+    hp: { name: "Нано-Броня", desc: "Макс HP +20", max: 5, type: "passive" },
     regen: { name: "Регенерация", desc: " +2 HP/сек", max: 5, type: "passive", evolveAt: 3, evoDesc: "Быстрое восстановление" },
     shield: { name: "Энерго-Щит", desc: "Блок + Взрыв щита", max: 5, type: "passive", evolveAt: 3, evoDesc: "Быстрая зарядка" },
     armor: { name: "Броня", desc: "Урон по вам -2", max: 5, type: "passive" },

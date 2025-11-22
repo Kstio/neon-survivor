@@ -1,24 +1,26 @@
 import { WORLD_SIZE } from './constants.js';
-import { Obstacle } from './entities/Items.js';
+import { Obstacle, ExplosiveBarrel, SlowZone } from './entities/Items.js';
 
 export function generateWorld() {
     const obstacles = [];
+    const barrels = [];
+    const slowZones = [];
     const half = WORLD_SIZE / 2;
 
-    generateCityZone(obstacles, 0, 0, half, half);
+    generateCityZone(obstacles, barrels, 0, 0, half, half);
 
-    generateIndustrialZone(obstacles, half, 0, half, half);
+    generateIndustrialZone(obstacles, barrels, slowZones, half, 0, half, half);
 
-    generateRuinsZone(obstacles, 0, half, half, half);
+    generateRuinsZone(obstacles, barrels, 0, half, half, half);
 
     generateWastelandZone(obstacles, half, half, half, half);
 
     addWorldBorders(obstacles);
 
-    return obstacles;
+    return { obstacles, barrels, slowZones };
 }
 
-function generateCityZone(obs, startX, startY, w, h) {
+function generateCityZone(obs, barrels, startX, startY, w, h) {
     const streetSize = 300;
     const gap = 80;
     
@@ -33,12 +35,22 @@ function generateCityZone(obs, startX, startY, w, h) {
                     '#001a33',
                     '#00ccff'
                 ));
+            } else if (Math.random() < 0.3) {
+                barrels.push(new ExplosiveBarrel(x + streetSize/2, y + streetSize/2));
             }
         }
     }
 }
 
-function generateIndustrialZone(obs, startX, startY, w, h) {
+function generateIndustrialZone(obs, barrels, slowZones, startX, startY, w, h) {
+    for(let i=0; i<40; i++) {
+        const zw = 150 + Math.random() * 200;
+        const zh = 150 + Math.random() * 200;
+        const zx = startX + Math.random() * (w - zw);
+        const zy = startY + Math.random() * (h - zh);
+        slowZones.push(new SlowZone(zx, zy, zw, zh));
+    }
+
     for (let i = 0; i < 60; i++) {
         const bw = 200 + Math.random() * 400;
         const bh = 100 + Math.random() * 200;
@@ -50,10 +62,14 @@ function generateIndustrialZone(obs, startX, startY, w, h) {
             '#1a1a1a',
             '#ffaa00' 
         ));
+        
+        if(Math.random() < 0.4) {
+            barrels.push(new ExplosiveBarrel(bx - 30, by + bh/2));
+        }
     }
 }
 
-function generateRuinsZone(obs, startX, startY, w, h) {
+function generateRuinsZone(obs, barrels, startX, startY, w, h) {
     for (let i = 0; i < 200; i++) {
         const size = 40 + Math.random() * 60;
         const bx = startX + Math.random() * (w - size);
@@ -64,6 +80,10 @@ function generateRuinsZone(obs, startX, startY, w, h) {
             '#2e2016', 
             '#664433' 
         ));
+
+        if (Math.random() < 0.05) {
+             barrels.push(new ExplosiveBarrel(bx + size + 20, by));
+        }
     }
 }
 

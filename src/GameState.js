@@ -8,8 +8,16 @@ export const state = {
     particles: [],
     texts: [],
     obstacles: [],
+    
+    airdropZones: [],
+    activeLoot: null,
+
     crates: [],
     skillCrates: [],
+    
+    barrels: [],
+    slowZones: [],
+
     camera: { x: 0, y: 0 },
     
     score: 0,
@@ -29,8 +37,16 @@ export function resetGameState() {
     state.particles = [];
     state.texts = [];
     state.obstacles = [];
+    
     state.crates = [];
     state.skillCrates = [];
+    
+    state.barrels = [];
+    state.slowZones = [];
+    
+    state.airdropZones = [];
+    state.activeLoot = null;
+
     state.score = 0;
     state.gameTime = 0;
     state.frameCount = 0;

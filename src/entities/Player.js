@@ -43,19 +43,42 @@ export class Player {
         this.orbitalAngle = 0;
         this.mineTimer = 0;
         this.laserTimer = 0;
+        
         this.dashCd = 0;
-        this.dashMax = 120;
+        this.dashMax = 150;
         this.dashActive = 0;
+        this.invulnTimer = 0; 
+
         this.empCd = 0;
-        this.empMax = 900;
+        this.empMax = 1200;
+        
         this.xp = 0;
         this.lvl = 1;
         this.nextXp = 50;
+
+        this.rootTimer = 0;
     }
 
     getSkillLvl(id) { return this.skills[id] || 0; }
 
+    applyRoot(duration) {
+        if (this.invulnTimer > 0 || this.dashActive > 0) return; 
+        
+        if (this.rootTimer > 0) return; 
+        this.rootTimer = duration;
+        state.texts.push(new FloatText(this.x, this.y - 60, 'ЗАХВАТ!', '#ff0055', 24));
+        playSound('hit');
+    }
+
     update(keys, mouse) {
+        if (this.invulnTimer > 0) this.invulnTimer--;
+        if (this.rootTimer > 0) {
+            this.rootTimer--;
+            if (this.rootTimer <= 0) {
+                state.texts.push(new FloatText(this.x, this.y - 40, 'СВОБОДЕН!', '#0f0', 18));
+            }
+        }
+
         if (this.stats.regen > 0 && this.hp < this.maxHp && state.frameCount % 60 === 0) {
             this.heal(this.stats.regen);
         }
@@ -132,15 +155,34 @@ export class Player {
         if (this.empCd > 0) this.empCd--;
 
         let dx = 0, dy = 0;
-        if (keys.w) dy = -1;
-        if (keys.s) dy = 1;
-        if (keys.a) dx = -1;
-        if (keys.d) dx = 1;
+        
+        if (this.rootTimer <= 0) {
+            if (keys.w) dy = -1;
+            if (keys.s) dy = 1;
+            if (keys.a) dx = -1;
+            if (keys.d) dx = 1;
+        } else {
+            this.x += (Math.random() - 0.5) * 2;
+            this.y += (Math.random() - 0.5) * 2;
+        }
+
+        let inSlowZone = false;
+        for (const zone of state.slowZones) {
+            if (this.x > zone.x && this.x < zone.x + zone.w &&
+                this.y > zone.y && this.y < zone.y + zone.h) {
+                inSlowZone = true;
+                break;
+            }
+        }
 
         let currSpeed = this.speed;
+        if (inSlowZone && this.dashActive <= 0) {
+            currSpeed *= 0.5;
+        }
+
         if (this.dashActive > 0) {
             this.dashActive--;
-            currSpeed *= 2.6;
+            currSpeed *= 2.4; 
             if (state.frameCount % 3 === 0) state.particles.push(new Particle(this.x, this.y, '#00ffff', 3));
         }
 
@@ -203,21 +245,27 @@ export class Player {
     }
 
     takeDamage(amt) {
-        if (this.dashActive > 0) return;
+        if (this.invulnTimer > 0 || this.dashActive > 0) return;
 
         if (this.shieldReady) {
             this.shieldReady = false;
             this.stats.shieldTimer = 0;
 
             const slvl = this.getSkillLvl('shield');
-            const blastDmg = 100 + (slvl * 50);
-            const blastRange = 200 + (slvl * 20);
+            const blastDmg = 80 + (slvl * 30); 
+            const blastRange = 160 + (slvl * 20); 
 
             state.enemies.forEach(e => {
-                if (!e.isDead && Math.hypot(e.x - this.x, e.y - this.y) < blastRange) {
-                    e.takeDamage(blastDmg, true);
-                    e.pushX = (e.x - this.x) * 0.1;
-                    e.pushY = (e.y - this.y) * 0.1;
+                if (!e.isDead) {
+                    const dist = Math.hypot(e.x - this.x, e.y - this.y);
+                    if (dist < blastRange) {
+                        const normDist = dist / blastRange;
+                        const damageFactor = Math.max(0.1, Math.pow(1 - normDist, 3));
+                        
+                        e.takeDamage(blastDmg * damageFactor, true);
+                        e.pushX = (e.x - this.x) * 0.2;
+                        e.pushY = (e.y - this.y) * 0.2;
+                    }
                 }
             });
 
@@ -293,24 +341,38 @@ export class Player {
     addSkill(id){ 
         if(!this.skills[id]) this.skills[id]=0; 
         this.skills[id]++; 
-        if(id==='hp'){ this.maxHp+=50; this.heal(50); } 
+        if(id==='hp'){ this.maxHp+=20; this.heal(20); } 
         this.recalcStats();
     }
     
     useDash(){ 
-        if(this.dashCd>0) return; 
-        this.dashCd=this.dashMax; 
-        this.dashActive=10; 
+        if(this.dashCd > 0) return; 
+        if(this.rootTimer > 0) {
+            state.texts.push(new FloatText(this.x, this.y - 40, 'НЕЛЬЗЯ!', '#f00'));
+            return;
+        }
+        this.dashCd = this.dashMax; 
+        this.dashActive = 20;
+        this.invulnTimer = 36;
         state.texts.push(new FloatText(this.x,this.y-40,'РЫВОК!','#0ff'));
     }
     
     useEmp(){ 
-        if(this.empCd>0) return; 
-        this.empCd=this.empMax; 
+        if(this.empCd > 0) return; 
+        this.empCd = this.empMax; 
+        
+        if (this.rootTimer > 0) {
+            this.rootTimer = 0;
+            state.texts.push(new FloatText(this.x, this.y - 80, 'СВОБОДА!', '#0f0', 24));
+        }
+
         this.spawnParticles('#00ffff', 24);
-        const empBase = 100 + (this.lvl*30); 
+        
+        const empBase = 60 + (this.lvl * 20); 
+        
         state.enemies.forEach(e=>{ 
-            if(!e.isDead && Math.hypot(e.x-this.x,e.y-this.y)<400) {
+            const dist = Math.hypot(e.x - this.x, e.y - this.y);
+            if(!e.isDead && dist < 320) {
                 const d = calcDmg(empBase, this.stats);
                 e.takeDamage(d.val, d.isCrit);
             }
@@ -322,6 +384,22 @@ export class Player {
     draw(ctx) {
         const px = this.x - state.camera.x;
         const py = this.y - state.camera.y;
+
+        if (this.invulnTimer > 0) {
+            ctx.globalAlpha = 0.6 + Math.sin(state.frameCount * 0.5) * 0.4;
+        }
+
+        if (this.rootTimer > 0) {
+            ctx.strokeStyle = '#ff0055';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(px - 20, py - 20); ctx.lineTo(px + 20, py + 20);
+            ctx.moveTo(px + 20, py - 20); ctx.lineTo(px - 20, py + 20);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(px, py, this.r + 10, 0, Math.PI * 2);
+            ctx.stroke();
+        }
 
         const auraLvl = this.getSkillLvl('aura');
         if (auraLvl > 0) {
@@ -394,6 +472,8 @@ export class Player {
         const hpPct = Math.max(0, this.hp / this.maxHp);
         ctx.fillStyle = hpPct > 0.3 ? '#0f0' : '#f00';
         ctx.fillRect(px - 22, py + 26, 44 * hpPct, 6);
+        
+        ctx.globalAlpha = 1;
     }
 
     spawnParticles(color, count, x = this.x, y = this.y) {

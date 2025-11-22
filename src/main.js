@@ -1,11 +1,11 @@
 import { state, resetGameState } from './GameState.js';
 import { WORLD_SIZE, SCREEN_W, SCREEN_H, SKILL_DB } from './constants.js';
 import { clamp, checkWall } from './utils.js';
-import { updateUI, updateIndicators, renderStats } from './ui.js';
+import { updateUI, updateIndicators, renderStats, renderAbilities } from './ui.js';
 import { generateWorld } from './MapGenerator.js';
 import { Player } from './entities/Player.js';
 import { Enemy } from './entities/Enemy.js';
-import { Obstacle, LootCrate, SkillCrate, Mine } from './entities/Items.js';
+import { Obstacle, Mine, AirdropZone, YellowLootBox } from './entities/Items.js'; 
 import { FloatText, Particle } from './entities/Particle.js';
 import { loadSounds, playSound } from './sounds.js';
 import { Meta, UPGRADES } from './MetaGame.js';
@@ -23,14 +23,14 @@ function init() {
 
     resetGameState();
     
-    state.obstacles = generateWorld();
+    const worldData = generateWorld();
+    state.obstacles = worldData.obstacles;
+    state.barrels = worldData.barrels;
+    state.slowZones = worldData.slowZones;
 
     state.player = new Player();
     
-    spawnCrate();
-    spawnCrate();
-    spawnRandomSkillCrateOnMap();
-    
+    spawnAirdropZone();
     updateUI();
 }
 
@@ -39,12 +39,21 @@ function gameLoop() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     state.frameCount++;
+    
     if (state.frameCount % 60 === 0) {
         state.gameTime++;
         state.globalDifficulty += 0.02;
         document.getElementById('timer-display').innerText = new Date(state.gameTime * 1000).toISOString().substr(14, 5);
-        if (state.gameTime % 20 === 0) spawnCrate();
-        if (state.gameTime % 60 === 0) spawnRandomSkillCrateOnMap();
+    }
+
+    if (state.frameCount % 300 === 0) { 
+        if (!state.activeLoot && state.airdropZones.length === 0) {
+            spawnAirdropZone();
+        }
+    }
+
+    if (state.gameTime > 0 && state.gameTime % 300 === 0 && state.frameCount % 60 === 0) {
+        spawnTitan();
     }
 
     state.player.update(keys, mouse);
@@ -54,31 +63,60 @@ function gameLoop() {
 
     drawGrid();
 
+    state.slowZones.forEach(z => z.draw(ctx));
+
+    if (state.airdropZones.length > 0) {
+        const zone = state.airdropZones[0];
+        zone.update();
+        zone.draw(ctx);
+
+        if (zone.isCompleted) {
+            playSound('powerUp');
+            state.activeLoot = new YellowLootBox(zone.x, zone.y);
+            state.airdropZones = []; 
+            state.texts.push(new FloatText(state.player.x, state.player.y - 80, 'ГРУЗ ДОСТАВЛЕН!', '#ffd700', 24));
+            
+            for(let i=0; i<30; i++) {
+                 state.particles.push(new Particle(zone.x, zone.y, '#ffd700', 5 + Math.random() * 5));
+            }
+        }
+    }
+
+    if (state.activeLoot) {
+        state.activeLoot.draw(ctx);
+        if (Math.hypot(state.player.x - state.activeLoot.x, state.player.y - state.activeLoot.y) < state.player.r + 40) {
+            openLootBox();
+        }
+    }
+
+    state.barrels = state.barrels.filter(b => {
+        b.draw(ctx);
+        if (b.hp <= 0) {
+            playSound('explosion');
+            state.particles.push(new Particle(b.x, b.y, '#ff3300', 20));
+            for(let k=0; k<15; k++) state.particles.push(new Particle(b.x, b.y, '#ffaa00', 6));
+            
+            const explosionRange = 180;
+            const explosionDmg = 150;
+
+            state.enemies.forEach(e => {
+                if (!e.isDead && Math.hypot(e.x - b.x, e.y - b.y) < explosionRange) {
+                    if(e.takeDamage(explosionDmg, true)) checkZoneKill(e);
+                    e.pushX = (e.x - b.x) * 0.2;
+                    e.pushY = (e.y - b.y) * 0.2;
+                }
+            });
+
+            if (Math.hypot(state.player.x - b.x, state.player.y - b.y) < explosionRange) {
+                state.player.takeDamage(30);
+                state.texts.push(new FloatText(state.player.x, state.player.y - 40, 'ВЗРЫВ!', '#ff0000', 20));
+            }
+            return false;
+        }
+        return true;
+    });
+
     spawnEnemies();
-
-    for (let i = state.crates.length - 1; i >= 0; i--) {
-        let c = state.crates[i];
-        c.draw(ctx);
-        if (Math.hypot(state.player.x - c.x, state.player.y - c.y) < state.player.r + 30) {
-            state.player.hp = Math.min(state.player.maxHp, state.player.hp + 50);
-            state.player.gainXp(150);
-            playSound('powerUp');
-            state.texts.push(new FloatText(state.player.x, state.player.y, 'ЛЕЧЕНИЕ!', '#0f0'));
-            state.particles.push(new Particle(c.x, c.y, '#0f0', 14));
-            state.crates.splice(i, 1);
-        }
-    }
-
-    for (let i = state.skillCrates.length - 1; i >= 0; i--) {
-        let s = state.skillCrates[i];
-        s.draw(ctx);
-        if (Math.hypot(state.player.x - s.x, state.player.y - s.y) < state.player.r + 30) {
-            state.skillCrates.splice(i, 1);
-            playSound('powerUp');
-            pauseGameForSkillBox();
-            return; 
-        }
-    }
 
     state.obstacles = state.obstacles.filter(o => {
         if (o instanceof Mine) {
@@ -87,7 +125,7 @@ function gameLoop() {
             state.enemies.forEach(e => {
                 if (!e.isDead && Math.hypot(e.x - o.x, e.y - o.y) < o.range) {
                     const dmg = 30 + (o.lvl || 1) * 15;
-                    e.takeDamage(dmg, false);
+                    if(e.takeDamage(dmg, false)) checkZoneKill(e);
                     triggered = true;
                 }
             });
@@ -111,12 +149,31 @@ function gameLoop() {
             state.bullets.splice(i, 1);
             continue;
         }
+        
+        if (b.isPlayer) {
+            for (let k = 0; k < state.barrels.length; k++) {
+                let barrel = state.barrels[k];
+                if (Math.hypot(barrel.x - b.x, barrel.y - b.y) < barrel.radius + b.size) {
+                    barrel.hp -= b.dmg;
+                    b.life = 0;
+                    b.spawnParticles('#ff5500', 3);
+                    break;
+                }
+            }
+            if (b.life <= 0) {
+                state.bullets.splice(i, 1);
+                continue;
+            }
+        }
+
         for (let j = state.enemies.length - 1; j >= 0; j--) {
             let e = state.enemies[j];
             if (e.isDead) continue;
             if (Math.hypot(e.x - b.x, e.y - b.y) < e.size + (b.size || 5)) {
                 if (!b.hitList.includes(j)) {
-                    e.takeDamage(b.dmg, b.isCrit);
+                    const killed = e.takeDamage(b.dmg, b.isCrit);
+                    if (killed) checkZoneKill(e);
+
                     if (b.pierce > 0) {
                         b.pierce--;
                         b.hitList.push(j);
@@ -199,7 +256,6 @@ function gameLoop() {
 
     state.player.draw(ctx);
     updateIndicators();
-    
     updateUI();
 
     if (state.isRunning && !state.isPaused) {
@@ -231,6 +287,27 @@ function drawGrid() {
     ctx.stroke();
 }
 
+function spawnTitan() {
+    let x, y, safe = false;
+    for (let k = 0; k < 10; k++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 500; 
+        x = state.player.x + Math.cos(angle) * dist;
+        y = state.player.y + Math.sin(angle) * dist;
+        x = clamp(x, 50, WORLD_SIZE - 50);
+        y = clamp(y, 50, WORLD_SIZE - 50);
+        if (!checkWall(x, y, 60)) {
+            safe = true;
+            break;
+        }
+    }
+    if (safe) {
+        state.enemies.push(new Enemy('titan', x, y));
+        state.texts.push(new FloatText(state.player.x, state.player.y - 150, 'ОПАСНОСТЬ: ТИТАН!', '#f00', 36));
+        playSound('explosion'); 
+    }
+}
+
 function spawnEnemies() {
     const limit = 20 + Math.floor(state.gameTime / 4);
     if (state.enemies.length >= limit) return;
@@ -257,39 +334,57 @@ function spawnEnemies() {
             if (state.gameTime > 90 && r > 0.9) type = 'tank';
             if (state.gameTime > 120 && r > 0.92) type = 'dasher';
             if (state.gameTime > 150 && r > 0.95) type = 'elite';
-            if (state.gameTime > 200 && r > 0.98 && state.enemies.filter(e => e.type === 'titan').length === 0) type = 'titan';
             
             state.enemies.push(new Enemy(type, x, y));
         }
     }
 }
 
-function spawnCrate() {
+function spawnAirdropZone() {
     let x, y, safe = false;
     for (let k = 0; k < 10; k++) {
-        x = Math.max(80, Math.random() * (WORLD_SIZE - 160));
-        y = Math.max(80, Math.random() * (WORLD_SIZE - 160));
-        if (!checkWall(x, y, 20)) { safe = true; break; }
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 300 + Math.random() * 400;
+        x = state.player.x + Math.cos(angle) * dist;
+        y = state.player.y + Math.sin(angle) * dist;
+        
+        x = clamp(x, 200, WORLD_SIZE - 200);
+        y = clamp(y, 200, WORLD_SIZE - 200);
+        
+        if (!checkWall(x, y, 150)) { safe = true; break; }
     }
+    
     if (safe) {
-        state.crates.push(new LootCrate(x, y));
-        state.texts.push(new FloatText(state.player.x, state.player.y - 50, 'ПРИПАСЫ!', '#0f0'));
+        state.airdropZones.push(new AirdropZone(x, y));
+        state.texts.push(new FloatText(state.player.x, state.player.y - 100, 'ЗОНА СБРОСА!', '#00ffff', 24));
     }
 }
 
-function spawnRandomSkillCrateOnMap() {
-    let x, y, safe = false;
-    for (let k = 0; k < 10; k++) {
-        x = Math.max(100, Math.random() * (WORLD_SIZE - 200));
-        y = Math.max(100, Math.random() * (WORLD_SIZE - 200));
-        if (!checkWall(x, y, 20)) { safe = true; break; }
+function checkZoneKill(enemy) {
+    if (state.airdropZones.length > 0) {
+        const zone = state.airdropZones[0];
+        if (zone.isActivated && !zone.isCompleted && zone.taskType === 'kills') {
+            const distPlayer = Math.hypot(state.player.x - zone.x, state.player.y - zone.y);
+            if (distPlayer < zone.radius) {
+                zone.current++;
+                state.texts.push(new FloatText(enemy.x, enemy.y, '+1 KILL', '#ffff00', 16));
+            }
+        }
     }
-    if (safe) state.skillCrates.push(new SkillCrate(x, y));
 }
 
-function spawnSkillCrate(x, y) {
-    state.skillCrates.push(new SkillCrate(x, y));
-    state.texts.push(new FloatText(x, y - 50, 'МОДУЛЬ!', '#00ffff'));
+function openLootBox() {
+    playSound('powerUp');
+    state.activeLoot = null; 
+    
+    const rand = Math.random();
+    if (rand < 0.4) {
+        const healAmt = 25 + Math.floor(Math.random() * 15); 
+        state.player.heal(healAmt);
+        state.texts.push(new FloatText(state.player.x, state.player.y - 60, `АПТЕЧКА +${healAmt}`, '#0f0', 24));
+    } else {
+        pauseGameForSkillBox();
+    }
 }
 
 function pauseGameForSkillBox() {
@@ -297,7 +392,7 @@ function pauseGameForSkillBox() {
     state.isPaused = true;
     
     const screen = document.getElementById('levelup-screen');
-    document.getElementById('sys-msg').innerText = 'Случайная разблокировка...';
+    document.getElementById('sys-msg').innerText = 'РАСШИФРОВКА ДАННЫХ...';
     screen.classList.remove('hidden');
     
     const available = Object.keys(SKILL_DB).filter(k => state.player.getSkillLvl(k) < SKILL_DB[k].max);
@@ -370,9 +465,26 @@ function createCard(key, container, screen) {
     container.appendChild(c);
 }
 
+function toggleAbilities() {
+    if (!state.isRunning) return;
+    const overlay = document.getElementById('abilities-overlay');
+    if (overlay.classList.contains('hidden')) {
+        renderAbilities();
+        overlay.classList.remove('hidden');
+    } else {
+        overlay.classList.add('hidden');
+    }
+}
+
 function togglePause() {
     if (!state.isRunning) return;
     if (!document.getElementById('levelup-screen').classList.contains('hidden')) return;
+    
+    const abilitiesOverlay = document.getElementById('abilities-overlay');
+    if (!abilitiesOverlay.classList.contains('hidden')) {
+        abilitiesOverlay.classList.add('hidden');
+        return;
+    }
     
     state.isPaused = !state.isPaused;
     const menu = document.getElementById('pause-menu');
@@ -392,6 +504,7 @@ function gameOver() {
     state.isRunning = false;
     if (animationId) cancelAnimationFrame(animationId);
     document.getElementById('overlay-screen').classList.remove('hidden');
+    document.getElementById('abilities-overlay').classList.add('hidden');
     
     const phrases = ['СИГНАЛ ПОТЕРЯН', 'КРИТИЧЕСКИЙ СБОЙ', 'СИСТЕМА ОФФЛАЙН'];
     document.getElementById('death-report').innerText = `${phrases[Math.floor(Math.random() * phrases.length)]}
@@ -449,13 +562,30 @@ document.getElementById('close-shop-btn').onclick = () => {
 };
 
 window.addEventListener('keydown', e => {
+    if (e.code === 'Tab') {
+        e.preventDefault();
+        toggleAbilities();
+        return;
+    }
+    
+    if (e.code === 'Escape') {
+        const overlay = document.getElementById('abilities-overlay');
+        if (!overlay.classList.contains('hidden')) {
+            toggleAbilities();
+        } else {
+            togglePause();
+        }
+        return;
+    }
+
+    if (state.isPaused || !state.isRunning) return;
+
     if (e.code === 'KeyW') keys.w = true;
     if (e.code === 'KeyS') keys.s = true;
     if (e.code === 'KeyA') keys.a = true;
     if (e.code === 'KeyD') keys.d = true;
     if (e.code === 'Space') state.player?.useDash();
     if (e.code === 'KeyE') state.player?.useEmp();
-    if (e.code === 'Escape') togglePause();
 });
 
 window.addEventListener('keyup', e => {

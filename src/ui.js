@@ -49,19 +49,14 @@ export function updateIndicators() {
         container.appendChild(arrow);
     };
 
-    let nearC = null, distC = Infinity;
-    state.crates.forEach(c => {
-        const d = Math.hypot(c.x - state.player.x, c.y - state.player.y);
-        if (d < distC) { distC = d; nearC = c; }
-    });
-    if (nearC) drawArrow(nearC.x, nearC.y, 'arrow-green');
+    if (state.airdropZones.length > 0 && !state.airdropZones[0].isCompleted) {
+        const zone = state.airdropZones[0];
+        drawArrow(zone.x, zone.y, 'arrow-blue');
+    }
 
-    let nearS = null, distS = Infinity;
-    state.skillCrates.forEach(s => {
-        const d = Math.hypot(s.x - state.player.x, s.y - state.player.y);
-        if (d < distS) { distS = d; nearS = s; }
-    });
-    if (nearS) drawArrow(nearS.x, nearS.y, 'arrow-blue');
+    if (state.activeLoot) {
+        drawArrow(state.activeLoot.x, state.activeLoot.y, 'arrow-green');
+    }
 }
 
 export function renderStats() {
@@ -83,4 +78,47 @@ export function renderStats() {
             list.appendChild(item);
         }
     });
+}
+
+export function renderAbilities() {
+    const list = document.getElementById('abilities-list');
+    list.innerHTML = '';
+    if (!state.player) return;
+
+    const header = document.createElement('div');
+    header.innerHTML = `<span style="color:#fff">Уровень доступа</span> <span style="color:var(--neon-blue)">${state.player.lvl}</span>`;
+    list.appendChild(header);
+
+    const sortedKeys = Object.keys(state.player.skills).sort((a,b) => {
+        const typeA = SKILL_DB[a].type;
+        const typeB = SKILL_DB[b].type;
+        if(typeA === typeB) return 0;
+        return typeA > typeB ? 1 : -1;
+    });
+
+    sortedKeys.forEach(key => {
+        const lvl = state.player.skills[key];
+        if (lvl > 0) {
+            const def = SKILL_DB[key];
+            const item = document.createElement('div');
+            
+            let typeIcon = '🔹'; 
+            if(def.type === 'weapon') typeIcon = '⚔️';
+            if(def.type === 'active') typeIcon = '⚡';
+
+            item.innerHTML = `
+                <span>${typeIcon} ${def.name}</span> 
+                <span style="color:var(--neon-gold)">Lvl ${lvl}</span>
+            `;
+            list.appendChild(item);
+        }
+    });
+
+    if (sortedKeys.length === 0) {
+        const empty = document.createElement('div');
+        empty.innerText = "Нет установленных модулей";
+        empty.style.color = "#555";
+        empty.style.justifyContent = "center";
+        list.appendChild(empty);
+    }
 }
