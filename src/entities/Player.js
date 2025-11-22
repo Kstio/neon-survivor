@@ -23,7 +23,7 @@ export class Player {
         this.baseSpeed = 5;
         this.speed = 5;
         
-        this.dmg = 10;
+        this.dmg = 40;
         this.bulletSpeed = 14;
         this.fireTimer = 0;
         this.bulletLife = 60;
