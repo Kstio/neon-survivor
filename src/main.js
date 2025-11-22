@@ -578,12 +578,13 @@ window.addEventListener('keydown', e => {
         return;
     }
 
-    if (state.isPaused || !state.isRunning) return;
-
     if (e.code === 'KeyW') keys.w = true;
     if (e.code === 'KeyS') keys.s = true;
     if (e.code === 'KeyA') keys.a = true;
     if (e.code === 'KeyD') keys.d = true;
+
+    if (state.isPaused || !state.isRunning) return;
+
     if (e.code === 'Space') state.player?.useDash();
     if (e.code === 'KeyE') state.player?.useEmp();
 });
@@ -593,6 +594,14 @@ window.addEventListener('keyup', e => {
     if (e.code === 'KeyS') keys.s = false;
     if (e.code === 'KeyA') keys.a = false;
     if (e.code === 'KeyD') keys.d = false;
+});
+
+window.addEventListener('blur', () => {
+    keys.w = false;
+    keys.a = false;
+    keys.s = false;
+    keys.d = false;
+    mouse.active = false;
 });
 
 window.addEventListener('mousemove', e => {
