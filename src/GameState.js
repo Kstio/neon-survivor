@@ -25,7 +25,15 @@ export const state = {
     frameCount: 0,
     globalDifficulty: 1,
     isRunning: false,
-    isPaused: false
+    isPaused: false,
+
+    director: {
+        credits: 0,
+        waveState: 'calm',
+        stateTimer: 0,
+        spawnRate: 60,
+        nextSpawn: 0
+    }
 };
 
 export function resetGameState() {
@@ -51,4 +59,12 @@ export function resetGameState() {
     state.gameTime = 0;
     state.frameCount = 0;
     state.globalDifficulty = 1;
+
+    state.director = {
+        credits: 0,
+        waveState: 'calm',
+        stateTimer: 0,
+        spawnRate: 60,
+        nextSpawn: 0
+    };
 }
