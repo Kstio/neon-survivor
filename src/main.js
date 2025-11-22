@@ -17,6 +17,22 @@ let animationId = null;
 const keys = { w: false, a: false, s: false, d: false };
 const mouse = { x: 0, y: 0, active: false };
 
+const ENEMY_DATA = {
+    'basic':    { cost: 1,  minTime: 0,   packSize: [1, 3] },
+    'runner':   { cost: 2,  minTime: 30,  packSize: [2, 5] },
+    'shooter':  { cost: 4,  minTime: 60,  packSize: [1, 2] },
+    'kamikaze': { cost: 5,  minTime: 90,  packSize: [3, 6] },
+    'tank':     { cost: 15, minTime: 120, packSize: [1, 1] },
+    'dasher':   { cost: 10, minTime: 150, packSize: [1, 2] },
+    'elite':    { cost: 25, minTime: 180, packSize: [1, 1] }
+};
+
+const WAVE_CYCLE = [
+    { state: 'calm',  duration: 10, budgetMult: 0.5, limitMult: 0.8 },
+    { state: 'build', duration: 30, budgetMult: 1.0, limitMult: 1.0 },
+    { state: 'peak',  duration: 20, budgetMult: 2.5, limitMult: 1.5 }
+];
+
 function init() {
     loadSounds();
     Meta.load();
@@ -42,7 +58,7 @@ function gameLoop() {
     
     if (state.frameCount % 60 === 0) {
         state.gameTime++;
-        state.globalDifficulty += 0.02;
+        state.globalDifficulty += 0.01; 
         document.getElementById('timer-display').innerText = new Date(state.gameTime * 1000).toISOString().substr(14, 5);
     }
 
@@ -55,6 +71,8 @@ function gameLoop() {
     if (state.gameTime > 0 && state.gameTime % 300 === 0 && state.frameCount % 60 === 0) {
         spawnTitan();
     }
+
+    updateDirector();
 
     state.player.update(keys, mouse);
     
@@ -115,8 +133,6 @@ function gameLoop() {
         }
         return true;
     });
-
-    spawnEnemies();
 
     state.obstacles = state.obstacles.filter(o => {
         if (o instanceof Mine) {
@@ -263,6 +279,119 @@ function gameLoop() {
     }
 }
 
+function getPowerScore() {
+    const totalSkillLevels = Object.values(state.player.skills).reduce((a, b) => a + b, 0);
+    return (state.player.lvl * 10) + (totalSkillLevels * 5) + (state.gameTime * 0.5);
+}
+
+function updateDirector() {
+    const dir = state.director;
+    dir.stateTimer++;
+    
+    let currentPhaseConfig = WAVE_CYCLE[0];
+    let timeAccum = 0;
+    
+    const totalCycleTime = WAVE_CYCLE.reduce((acc, phase) => acc + phase.duration, 0) * 60;
+    const currentCycleFrame = state.frameCount % totalCycleTime;
+    
+    for (let phase of WAVE_CYCLE) {
+        const phaseDurationFrames = phase.duration * 60;
+        if (currentCycleFrame < timeAccum + phaseDurationFrames) {
+            currentPhaseConfig = phase;
+            break;
+        }
+        timeAccum += phaseDurationFrames;
+    }
+    dir.waveState = currentPhaseConfig.state;
+
+    if (state.frameCount < dir.nextSpawn) return;
+    dir.nextSpawn = state.frameCount + dir.spawnRate;
+
+    const powerScore = getPowerScore();
+    const baseMaxEnemies = 20 + (powerScore / 50); 
+    const maxEnemies = Math.min(250, baseMaxEnemies * currentPhaseConfig.limitMult);
+
+    if (state.enemies.length >= maxEnemies) return;
+
+    const budgetBase = 2 + (powerScore / 30);
+    dir.credits += budgetBase * currentPhaseConfig.budgetMult * state.globalDifficulty;
+
+    dir.credits = Math.min(dir.credits, 100 + powerScore / 5);
+
+    spawnWave();
+}
+
+function spawnWave() {
+    const dir = state.director;
+    
+    const availableTypes = Object.keys(ENEMY_DATA).filter(type => state.gameTime >= ENEMY_DATA[type].minTime);
+    
+    if (availableTypes.length === 0) availableTypes.push('basic');
+
+    let packsSpawnedThisFrame = 0;
+    const MAX_PACKS_PER_FRAME = 3;
+    const spawnedTypes = new Set();
+
+    let attempts = 10;
+    
+    while (dir.credits > 0 && attempts > 0 && packsSpawnedThisFrame < MAX_PACKS_PER_FRAME) {
+        
+        let candidates = availableTypes.filter(t => !spawnedTypes.has(t));
+        if (candidates.length === 0) candidates = availableTypes;
+
+        const type = candidates[Math.floor(Math.random() * candidates.length)];
+        const data = ENEMY_DATA[type];
+
+        if (dir.credits >= data.cost) {
+            const packSize = Math.floor(Math.random() * (data.packSize[1] - data.packSize[0] + 1)) + data.packSize[0];
+            
+            spawnEnemyPack(type, packSize);
+            
+            dir.credits -= data.cost * packSize;
+            packsSpawnedThisFrame++;
+            spawnedTypes.add(type);
+        } else {
+            attempts--;
+        }
+        
+        if (dir.credits < 1) break;
+    }
+}
+
+function spawnEnemyPack(type, count) {
+    let centerX, centerY, safe = false;
+    
+    for (let k = 0; k < 5; k++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = (Math.max(SCREEN_W(), SCREEN_H()) / 2) + 100 + Math.random() * 200;
+        
+        centerX = state.player.x + Math.cos(angle) * dist;
+        centerY = state.player.y + Math.sin(angle) * dist;
+        
+        centerX = clamp(centerX, 50, WORLD_SIZE - 50);
+        centerY = clamp(centerY, 50, WORLD_SIZE - 50);
+        
+        if (!checkWall(centerX, centerY, 40)) {
+            safe = true;
+            break;
+        }
+    }
+
+    if (!safe) return;
+
+    for (let i = 0; i < count; i++) {
+        const offsetX = (Math.random() - 0.5) * 60;
+        const offsetY = (Math.random() - 0.5) * 60;
+        
+        const x = clamp(centerX + offsetX, 50, WORLD_SIZE - 50);
+        const y = clamp(centerY + offsetY, 50, WORLD_SIZE - 50);
+
+        if (!checkWall(x, y, 20)) {
+            state.enemies.push(new Enemy(type, x, y));
+        }
+    }
+}
+
 function drawGrid() {
     const half = WORLD_SIZE / 2;
     const px = state.player.x;
@@ -305,38 +434,6 @@ function spawnTitan() {
         state.enemies.push(new Enemy('titan', x, y));
         state.texts.push(new FloatText(state.player.x, state.player.y - 150, 'ОПАСНОСТЬ: ТИТАН!', '#f00', 36));
         playSound('explosion'); 
-    }
-}
-
-function spawnEnemies() {
-    const limit = 20 + Math.floor(state.gameTime / 4);
-    if (state.enemies.length >= limit) return;
-    if (Math.random() < 0.04) {
-        let x, y, safe = false;
-        for (let k = 0; k < 10; k++) {
-            const angle = Math.random() * Math.PI * 2;
-            const dist = Math.max(SCREEN_W(), SCREEN_H()) / 2 + 120 + Math.random() * 300;
-            x = state.player.x + Math.cos(angle) * dist;
-            y = state.player.y + Math.sin(angle) * dist;
-            x = clamp(x, 50, WORLD_SIZE - 50);
-            y = clamp(y, 50, WORLD_SIZE - 50);
-            if (Math.hypot(x - state.player.x, y - state.player.y) > 400 && !checkWall(x, y, 30)) {
-                safe = true;
-                break;
-            }
-        }
-        if (safe) {
-            const r = Math.random();
-            let type = 'basic';
-            if (state.gameTime > 20 && r > 0.85) type = 'runner';
-            if (state.gameTime > 40 && r > 0.85) type = 'shooter';
-            if (state.gameTime > 60 && r > 0.9) type = 'kamikaze';
-            if (state.gameTime > 90 && r > 0.9) type = 'tank';
-            if (state.gameTime > 120 && r > 0.92) type = 'dasher';
-            if (state.gameTime > 150 && r > 0.95) type = 'elite';
-            
-            state.enemies.push(new Enemy(type, x, y));
-        }
     }
 }
 
