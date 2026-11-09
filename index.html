@@ -2,94 +2,277 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neon Survivor</title>
-    
+    <meta name="description" content="Выберите корпус, удержите сектор и соберите свою комбинацию оружия в неоновом городе." />
+    <meta property="og:title" content="Neon Survivor" />
+    <meta property="og:description" content="Выберите корпус, удержите сектор и соберите свою комбинацию оружия в неоновом городе." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/station.css">
 </head>
 <body>
-    <div class="xp-bar-container">
-        <div class="xp-bar-fill" id="xp-fill"></div>
+    <canvas id="gameCanvas" tabindex="-1" aria-label="Игровое поле"></canvas>
+
+    <div id="ui-layer" class="hud">
+        <div id="achievement-toast-container" class="achievement-toast-container"></div>
+
+        <div class="hud__xp-bar">
+            <div class="hud__xp-fill" id="xp-fill"></div>
+        </div>
+
+        <div class="hud__header">
+            <div class="hud__stats">
+                <button class="stat-box hull-status" id="hud-build" aria-label="Открыть сборку (Tab)"><span class="stat-box__label">КОРПУС</span><span id="hud-hp">100 / 100</span><span id="hud-slots">Оружие 1/4 · Пассивки 0/4</span></button>
+                <div class="stat-box">
+                    <span class="stat-box__label">УРОВЕНЬ</span>
+                    <span class="stat-box__val" id="level-display">1</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-box__label">СЧЁТ</span>
+                    <span class="stat-box__val" id="score-display">0</span>
+                </div>
+                <div class="stat-box stat-box--starter-shield hidden" id="starter-shield-box">
+                    <span class="stat-box__label">СТАРТ. ЩИТ</span>
+                    <span class="stat-box__val" id="starter-shield-display">0</span>
+                </div>
+                <div class="stat-box stat-box--energy-shield hidden" id="energy-shield-box">
+                    <span class="stat-box__label">ЭНЕРГО-ЩИТ</span>
+                    <span class="stat-box__val" id="energy-shield-display">ГОТОВ</span>
+                </div>
+            </div>
+
+            <div class="hud__center">
+                <div class="stat-box stat-box--timer">
+                    <span class="stat-box__label">ВРЕМЯ ВЫЖИВАНИЯ</span>
+                    <span class="stat-box__val" id="timer-display">00:00</span>
+                </div>
+            </div>
+
+            <div class="hud__actions">
+                <button class="btn btn--small btn--tool btn--radar active" id="btn-radar" title="Переключить тактический радар [M]">
+                    <span class="radar-dot"></span>РАДАР [M]
+                </button>
+                <button class="btn btn--small btn--danger" id="btn-pause" title="Пауза [ESC]">ПАУЗА</button>
+            </div>
+        </div>
+
+        <div id="touch-stick" aria-label="Движение корабля"><span></span></div>
+        <div class="hud__footer">
+            <button type="button" class="skill-slot" id="skill-dash" aria-label="Рывок (пробел)">
+                <kbd class="skill-slot__key">SPC</kbd>
+                <span class="skill-slot__icon" id="dash-symbol"></span><span class="ability-cd" id="dash-time"></span>
+                <div class="skill-slot__cd" id="cd-dash"></div>
+            </button>
+            <button type="button" class="skill-slot" id="skill-emp" aria-label="Способность корпуса (E)">
+                <kbd class="skill-slot__key">E</kbd>
+                <span class="skill-slot__icon" id="skill-emp-icon"></span><span class="ability-cd" id="ult-time"></span>
+                <div class="skill-slot__cd" id="cd-emp"></div>
+            </button>
+        </div>
+
+        <div id="event-banner" class="event-banner hidden">
+            <div class="event-banner__title" id="event-title">ТРЕВОГА</div>
+            <div class="event-banner__desc" id="event-desc">ОПИСАНИЕ СОБЫТИЯ</div>
+        </div>
     </div>
-    
+
     <div id="loot-indicators"></div>
-    
-    <canvas id="gameCanvas"></canvas>
-    
-    <div id="ui-layer">
-        <div class="hud-top">
-            <div class="stat-group">
-                <div class="stat-box">
-                    <div class="stat-label">УРОВЕНЬ</div>
-                    <div class="stat-val" id="level-display">1</div>
+
+    <div id="abilities-overlay" class="screen-modal hidden" role="dialog" aria-modal="true" aria-label="Сборка">
+        <div class="panel">
+            <div class="loadout-title"><h2 class="panel__title">Сборка</h2><button class="station-link" id="close-build">Закрыть</button></div>
+            <div id="abilities-list" class="loadout-list"></div>
+        </div>
+    </div>
+
+    <header class="station-bar" aria-label="Навигация ангара">
+        <div class="station-bar-inner">
+            <button class="station-brand" id="station-home" aria-label="Neon Survivor — в ангар"><span class="brand-symbol" aria-hidden="true"></span><span>Ангар</span></button>
+            <nav class="station-tabs" aria-label="Разделы ангара">
+                <button id="chassis-btn">Корпуса</button>
+                <button id="open-shop-btn">Мастерская</button>
+                <button id="open-database-btn">База данных</button>
+            </nav>
+            <div class="station-tools"><button id="open-profile-btn">Профиль</button><button id="open-audio-btn">Звук</button></div>
+        </div>
+    </header>
+
+    <main id="overlay-screen" class="screen screen--dark station-page">
+        <div class="hangar">
+            <section class="hangar-controls">
+                <h1 class="game-title">NEON<br><span>SURVIVOR</span></h1>
+                <p class="touch-keys">Движение — левый джойстик. Рывок и способность корпуса — справа.</p>
+                <p class="hangar-keys"><kbd>WASD</kbd> / стрелки — движение<br><kbd>Пробел</kbd> — рывок <span>·</span> <kbd>E</kbd> — способность корпуса</p>
+                <div id="death-report" class="death-report" aria-live="polite"></div>
+                <button class="btn btn--primary" id="start-btn">Начать забег</button>
+                <label class="aim-switch"><input type="checkbox" id="autoaim-toggle-start"><span>Автоприцел</span></label>
+            </section>
+            <figure class="hangar-figure">
+                <canvas id="hangar-art" width="640" height="384" aria-label="Выбранный корпус"></canvas>
+                <figcaption><div><span id="hangar-model">VANGUARD-MK1</span><strong id="hangar-pilot">Штурмовик</strong></div><button class="station-link" id="hangar-change">Сменить корпус <span aria-hidden="true">↗</span></button></figcaption>
+            </figure>
+        </div>
+    </main>
+
+    <section id="chassis-screen" class="screen station-page hidden" aria-labelledby="chassis-title">
+        <div class="station-content">
+            <div class="station-heading"><div><h2 id="chassis-title">Корпуса</h2><p>Выбери корабль для следующего забега.</p></div>
+            <div class="chip-balance"><span aria-hidden="true">◇</span><div><small>Чипы</small><strong id="chassis-currency">0</strong></div></div></div>
+            <div id="chassis-container" class="fleet" aria-label="Осмотр корпуса"></div>
+            <div id="pilot-detail" class="pilot-detail"></div>
+            <p id="pilot-feedback" class="station-feedback" role="status"></p>
+        </div>
+    </section>
+
+    <section id="shop-screen" class="screen station-page hidden" aria-labelledby="workshop-title">
+        <div class="station-content">
+            <div class="station-heading"><div><h2 id="workshop-title">Мастерская</h2><p>Постоянные улучшения для всех корпусов.</p></div>
+            <div class="chip-balance"><span aria-hidden="true">◇</span><div><small>Чипы</small><strong id="meta-currency">0</strong></div></div></div>
+            <div id="workshop-filters" class="choice-strip" aria-label="Фильтры улучшений">
+                <button data-shop-filter="all">Все улучшения</button><button data-shop-filter="affordable">По средствам</button><button data-shop-filter="max">На максимуме</button>
+            </div>
+            <p id="shop-feedback" class="station-feedback" role="status"></p>
+            <div id="shop-container" class="workshop-grid"></div>
+        </div>
+    </section>
+
+    <section id="database-screen" class="screen station-page hidden" aria-labelledby="archive-title">
+        <div class="station-content">
+            <div class="station-heading"><div><h2 id="archive-title">База данных</h2><p>Характеристики модулей, рецепты эволюций и досье противников.</p></div></div>
+            <div class="archive-tools">
+                <div id="archive-groups" class="choice-strip" aria-label="Раздел справочника">
+                    <button data-group="weapon">Оружие</button><button data-group="passive">Пассивки</button><button data-group="evo">Эволюции</button><button data-group="enemy">Противники</button>
                 </div>
-                <div class="stat-box">
-                    <div class="stat-label">СЧЁТ</div>
-                    <div class="stat-val" id="score-display">0</div>
+                <label class="archive-search"><span class="search-glyph" aria-hidden="true"></span><input id="archive-query" type="search" placeholder="Найти в базе" aria-label="Найти в базе" autocomplete="off"></label>
+            </div>
+            <div class="archive-layout">
+                <div class="archive-index"><div id="archive-count" class="archive-count" role="status"></div><div id="archive-list" class="archive-list" aria-label="Записи справочника"></div></div>
+                <article id="archive-detail" class="archive-detail" aria-label="Выбранная запись"></article>
+            </div>
+        </div>
+    </section>
+
+    <div id="profile-screen" class="screen screen--solid screen--scrollable station-page hidden">
+        <div class="screen__content screen__content--dashboard">
+            <h2 class="screen__title">ПРОФИЛЬ ПИЛОТА</h2>
+
+            <div class="profile-layout">
+                <div class="profile-col">
+                    <h3 class="section-subtitle">СТАТИСТИКА</h3>
+                    <div id="profile-stats" class="panel__list panel__list--grid"></div>
+
+                    <h3 class="section-subtitle">ДИРЕКТИВЫ</h3>
+                    <div id="profile-achievements" class="panel__list panel__list--grid"></div>
+                </div>
+
+                <div class="profile-col">
+                    <h3 class="section-subtitle">ЖУРНАЛ ИНЦИДЕНТОВ</h3>
+                    <div id="profile-runlog" class="panel__list run-log-list"></div>
                 </div>
             </div>
-            
-            <button class="btn-small" id="btn-pause" style="pointer-events:auto;">ПАУЗА</button>
-            
-            <div class="stat-box">
-                <div class="stat-label">ВРЕМЯ</div>
-                <div class="stat-val" id="timer-display">00:00</div>
-            </div>
-        </div>
 
-        <div class="skills-hud">
-            <div class="skill-slot" id="skill-dash">
-                <div class="key-hint">SPACE</div>
-                <span class="skill-icon">⚡</span>
-                <div class="skill-cd-overlay" id="cd-dash" style="height:0"></div>
-            </div>
-            <div class="skill-slot" id="skill-emp">
-                <div class="key-hint">E</div>
-                <span class="skill-icon">☢️</span>
-                <div class="skill-cd-overlay" id="cd-emp" style="height:0"></div>
+            <div class="action-group" style="margin-top: 30px;">
+                <button class="btn btn--secondary" id="close-profile-btn">НАЗАД</button>
             </div>
         </div>
     </div>
 
-    <div id="abilities-overlay" class="hidden">
-        <h2>СОСТОЯНИЕ СИСТЕМЫ</h2>
-        <div id="abilities-list"></div>
-        <div class="hint-text">Нажмите TAB для просмотра навыков, ESCAPE чтобы поставить игру на паузу.</div>
-    </div>
+    <div id="levelup-screen" class="screen screen--solid hidden">
+        <div class="screen__content screen__content--wide">
+            <h2 class="screen__title">УРОВЕНЬ ПОВЫШЕН</h2>
+            <p id="sys-msg" class="screen__subtitle">Выберите модуль</p>
+            <div id="levelup-slots-info" class="slots-info">Оружие 1/4 • Пассивки 0/4</div>
 
-    <div id="overlay-screen">
-        <h1>Neon Survivor</h1>
-        <p>Новая логика врагов.<br>Новый TAB.</p>
-        <div style="width: 250px; display:flex; flex-direction:column; gap:10px">
-            <button class="btn-primary" id="start-btn" style="pointer-events:auto">НАЧАТЬ МИССИЮ</button>
-            <button class="btn-secondary" id="open-shop-btn" style="pointer-events:auto">МАГАЗИН</button>
-        </div>
-        <p id="death-report" style="color:#ff0055; margin-top:25px; white-space:pre-line; font-size: 18px; text-shadow: 0 0 10px #ff0055;"></p>
-    </div>
+            <div class="cards-grid" id="cards-box"></div>
 
-    <div id="shop-screen" class="hidden">
-        <h2>МАГАЗИН</h2>
-        <div class="shop-balance">ЧИПЫ: <span id="meta-currency" style="color:#ffd700">0</span></div>
-        <div class="card-container" id="shop-container">
-        </div>
-        <div style="margin-top:30px; width: 200px;">
-            <button class="btn-primary" id="close-shop-btn" style="pointer-events:auto">НАЗАД</button>
+            <div class="controls-group" id="levelup-controls" style="display:none;">
+                <button class="btn btn--tool" id="reroll-btn">
+                    Обновить · <span id="reroll-count">3</span>
+                </button>
+                <button class="btn btn--tool" id="banish-btn">
+                    Изгнать навык
+                </button>
+                <button class="btn btn--tool" id="skip-btn">
+                    Пропустить · +40 HP
+                </button>
+            </div>
         </div>
     </div>
 
-    <div id="levelup-screen" class="hidden">
-        <h2>СИСТЕМА ОБНОВЛЕНА</h2>
-        <div id="sys-msg" style="color:#aaa; margin-bottom:20px">ВЫБЕРИТЕ МОДУЛЬ ДЛЯ УСТАНОВКИ</div>
-        <div class="card-container" id="cards-box"></div>
-    </div>
+    <div id="pause-menu" class="screen screen--solid hidden">
+        <div class="screen__content">
+            <h2 class="screen__title">ПАУЗА</h2>
+            <div id="stats-list" class="panel__list panel__list--grid panel__list--scrollable"></div>
 
-    <div id="pause-menu" class="hidden">
-        <h2>ПАУЗА</h2>
-        <div id="stats-list"></div>
-        <div style="width: 200px;">
-            <button class="btn-primary" id="resume-btn" style="pointer-events:auto">ПРОДОЛЖИТЬ</button>
+            <label class="toggle" style="margin-bottom: 20px;">
+                <input type="checkbox" id="autoaim-toggle-pause" class="toggle__input">
+                <span class="toggle__label">АВТОПРИЦЕЛ</span>
+            </label>
+
+            <div class="action-group">
+                <button class="btn btn--primary" id="resume-btn">ПРОДОЛЖИТЬ</button>
+                <button class="btn btn--secondary" id="pause-audio-btn">НАСТРОЙКИ ЗВУКА</button>
+                <button class="btn btn--tool" id="pause-xp-report-btn" title="Показать и скопировать сводку опыта [F9]">Сводка забега [F9]</button>
+            </div>
+            <pre id="xp-diagnostic-box" class="boot-log hidden" style="margin-top: 14px; max-height: 220px; overflow-y: auto; text-align: left; font-size: 11px; white-space: pre-wrap; user-select: text;"></pre>
         </div>
     </div>
+
+    <div id="audio-settings-screen" class="screen screen--modal hidden">
+        <div class="screen__content screen__content--audio">
+            <h2 class="screen__title">Настройки звука</h2>
+
+            <div class="audio-controls-panel">
+                <div class="audio-setting-row">
+                    <div class="audio-label-group">
+                        <span class="audio-label">ОБЩАЯ ГРОМКОСТЬ</span>
+                        <span class="audio-val-badge" id="master-val-badge">70%</span>
+                    </div>
+                    <input type="range" id="master-volume-slider" class="range-slider" min="0" max="100" step="1" value="70">
+                </div>
+
+                <div class="audio-setting-row">
+                    <div class="audio-label-group">
+                        <span class="audio-label">ЭФФЕКТЫ БОЯ (SFX)</span>
+                        <span class="audio-val-badge" id="sfx-val-badge">70%</span>
+                    </div>
+                    <input type="range" id="sfx-volume-slider" class="range-slider" min="0" max="100" step="1" value="70">
+                </div>
+
+                <div class="audio-setting-row">
+                    <div class="audio-label-group">
+                        <span class="audio-label">МУЗЫКА СИНТЕЗАТОРА (BGM)</span>
+                        <span class="audio-val-badge" id="music-val-badge">60%</span>
+                    </div>
+                    <input type="range" id="music-volume-slider" class="range-slider" min="0" max="100" step="1" value="60">
+                </div>
+
+                <div class="audio-setting-row">
+                    <div class="audio-label-group">
+                        <span class="audio-label">ИНТЕРФЕЙС / ОПЫТ (UI)</span>
+                        <span class="audio-val-badge" id="ui-val-badge">80%</span>
+                    </div>
+                    <input type="range" id="ui-volume-slider" class="range-slider" min="0" max="100" step="1" value="80">
+                </div>
+
+                <div class="audio-setting-row audio-setting-row--toggle">
+                    <label class="toggle">
+                        <input type="checkbox" id="mute-toggle" class="toggle__input">
+                        <span class="toggle__label">ВЫКЛЮЧИТЬ ВЕСЬ ЗВУК (MUTE)</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="action-group" style="margin-top: 25px;">
+                <button class="btn btn--primary" id="close-audio-btn">СОХРАНИТЬ И ЗАКРЫТЬ</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="crt-overlay"></div>
 
     <script type="module" src="src/main.js"></script>
 </body>

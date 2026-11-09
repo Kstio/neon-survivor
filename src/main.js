@@ -1,14 +1,37 @@
-import { state, resetGameState } from './GameState.js';
-import { WORLD_SIZE, SCREEN_W, SCREEN_H, SKILL_DB } from './constants.js';
-import { clamp, checkWall } from './utils.js';
-import { updateUI, updateIndicators, renderStats, renderAbilities } from './ui.js';
+import { skillPreview } from './systems/SkillPreview.js';
+import { updateHangar, openFleet, openWorkshop } from './ui/Hangar.js';
+import { openArchive } from './ui/Archive.js';
+import { bindTouchStick } from './ui/TouchStick.js';
+import { makeModuleIcon } from './systems/ModuleIcons.js';
+import { getXpThresholdForLevel, state, resetGameState, captureXpTelemetrySnapshot, formatXpDiagnosticReport, recordFallbackChipReward } from './GameState.js';
+import { WORLD_SIZE, SCREEN_W, SCREEN_H, SKILL_DB, BALANCE, ENEMY_LABELS, ACHIEVEMENTS_DB } from './constants.js';
+import { clamp, buildSpatialGrid } from './utils.js';
+import { updateUI, updateIndicators, renderStats, renderAbilities, renderProfile, renderAudioSettings, initAudioUI } from './ui.js';
 import { generateWorld } from './MapGenerator.js';
-import { Player } from './entities/Player.js';
-import { Enemy } from './entities/Enemy.js';
-import { Obstacle, Mine, AirdropZone, YellowLootBox } from './entities/Items.js'; 
-import { FloatText, Particle } from './entities/Particle.js';
+import { Player, getSkillSlotCategory, FALLBACK_SKILL_REWARD_CHIPS } from './entities/Player.js';
+import { YellowLootBox, minePool, chipPool, gemPool } from './entities/Items.js';
+import { particlePool, floatTextPool } from './entities/Particle.js';
+import { bulletPool } from './entities/Bullet.js';
+import { enemyPool } from './entities/Enemy.js';
 import { loadSounds, playSound } from './sounds.js';
-import { Meta, UPGRADES } from './MetaGame.js';
+import { Meta } from './MetaGame.js';
+import * as SpawnSystem from './systems/SpawnSystem.js';
+import * as CollisionSystem from './systems/CollisionSystem.js';
+import * as RenderSystem from './systems/RenderSystem.js';
+import { PilotManager } from './systems/PilotClasses.js';
+import { DirectorEvents } from './systems/DirectorEvents.js';
+import { DamageTextSystem } from './systems/DamageTextSystem.js';
+import { MusicEngine } from './audio/MusicEngine.js';
+import { RadarSystem } from './systems/RadarSystem.js';
+import { AchievementSystem } from './systems/AchievementSystem.js';
+import { NotificationSystem } from './systems/NotificationSystem.js';
+
+let banishMode = false;
+let manualPauseActive = false;
+let activeChoiceType = null;
+let currentChoiceResolved = false;
+let pendingSkillBoxes = 0;
+let pendingDirectLevelUps = 0;
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -16,684 +39,930 @@ const ctx = canvas.getContext('2d');
 let animationId = null;
 const keys = { w: false, a: false, s: false, d: false };
 const mouse = { x: 0, y: 0, active: false };
+const clearStick = bindTouchStick(document.getElementById('touch-stick'), keys, () => state.isRunning && !state.isPaused);
 
-const ENEMY_DATA = {
-    'basic':    { cost: 1,  minTime: 0,   packSize: [1, 3] },
-    'runner':   { cost: 2,  minTime: 30,  packSize: [2, 5] },
-    'shooter':  { cost: 4,  minTime: 60,  packSize: [1, 2] },
-    'kamikaze': { cost: 5,  minTime: 90,  packSize: [3, 6] },
-    'tank':     { cost: 15, minTime: 120, packSize: [1, 1] },
-    'dasher':   { cost: 10, minTime: 150, packSize: [1, 2] },
-    'elite':    { cost: 25, minTime: 180, packSize: [1, 1] }
-};
+export function stopGameLoop() {
+    clearStick();
+    if (animationId !== null) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+    }
+}
 
-const WAVE_CYCLE = [
-    { state: 'calm',  duration: 10, budgetMult: 0.5, limitMult: 0.8 },
-    { state: 'build', duration: 30, budgetMult: 1.0, limitMult: 1.0 },
-    { state: 'peak',  duration: 20, budgetMult: 2.5, limitMult: 1.5 }
-];
-
-function init() {
+export function init() {
+    stopGameLoop();
+    for (const key in keys) keys[key] = false;
+    mouse.active = false;
     loadSounds();
     Meta.load();
 
+    banishMode = false;
+    manualPauseActive = false;
+    activeChoiceType = null;
+    currentChoiceResolved = false;
+    pendingSkillBoxes = 0;
+    pendingDirectLevelUps = 0;
+
+    document.getElementById('levelup-screen')?.classList.add('hidden');
+    document.getElementById('pause-menu')?.classList.add('hidden');
+    document.getElementById('abilities-overlay')?.classList.add('hidden');
+
+    state.bullets.forEach(b => bulletPool.release(b));
+    state.enemyBullets.forEach(b => bulletPool.release(b));
+    state.particles.forEach(p => particlePool.release(p));
+    state.texts.forEach(t => floatTextPool.release(t));
+    state.enemies.forEach(e => enemyPool.release(e));
+    state.mines.forEach(m => minePool.release(m));
+    state.chips.forEach(c => chipPool.release(c));
+    state.gems.forEach(g => gemPool.release(g));
+
     resetGameState();
-    
+    DamageTextSystem.reset();
+    AchievementSystem.reset();
+    NotificationSystem.reset();
+
     const worldData = generateWorld();
     state.obstacles = worldData.obstacles;
+    state.obstacleGrid = buildSpatialGrid(state.obstacles);
     state.barrels = worldData.barrels;
     state.slowZones = worldData.slowZones;
 
     state.player = new Player();
-    
-    spawnAirdropZone();
-    updateUI();
-}
-
-function gameLoop() {
-    if (!state.isRunning || state.isPaused) return;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    state.frameCount++;
-    
-    if (state.frameCount % 60 === 0) {
-        state.gameTime++;
-        state.globalDifficulty += 0.01; 
-        document.getElementById('timer-display').innerText = new Date(state.gameTime * 1000).toISOString().substr(14, 5);
+    const pilotDef = PilotManager.getPilot(state.player.pilotId);
+    if (pilotDef.starterSkill) Meta.recordSkillDiscovered(pilotDef.starterSkill);
+    for (const [slotId, icon] of [['dash-symbol', 'ability:dash'], ['skill-emp-icon', 'ability:' + pilotDef.id]]) {
+        const slot = document.getElementById(slotId);
+        slot.innerHTML = '';
+        slot.appendChild(makeModuleIcon(icon, 29));
+    }
+    const ultButton = document.getElementById('skill-emp');
+    ultButton.title = `${pilotDef.ultName} [E] · ${pilotDef.ultDesc}`;
+    ultButton.setAttribute?.('aria-label', `${pilotDef.ultName} (E)`);
+    if (state.xpTelemetry) {
+        state.xpTelemetry.pilotId = pilotDef.id;
+        state.xpTelemetry.pilotName = pilotDef.name;
+        state.xpTelemetry.starterSkill = pilotDef.starterSkill || 'multi';
+        state.xpTelemetry.metaExpBonus = Meta.getUpgradeValue('exp') || 0;
+    }
+    const diagBox = document.getElementById('xp-diagnostic-box');
+    if (diagBox) {
+        diagBox.textContent = '';
+        diagBox.classList.add('hidden');
     }
 
-    if (state.frameCount % 300 === 0) { 
-        if (!state.activeLoot && state.airdropZones.length === 0) {
-            spawnAirdropZone();
-        }
-    }
-
-    if (state.gameTime > 0 && state.gameTime % 300 === 0 && state.frameCount % 60 === 0) {
-        spawnTitan();
-    }
-
-    updateDirector();
-
-    state.player.update(keys, mouse);
-    
     state.camera.x = clamp(state.player.x - SCREEN_W() / 2, 0, WORLD_SIZE - SCREEN_W());
     state.camera.y = clamp(state.player.y - SCREEN_H() / 2, 0, WORLD_SIZE - SCREEN_H());
 
-    drawGrid();
+    SpawnSystem.spawnAirdropZone();
+    lastFrameTime = performance.now();
+    accumulator = 0;
+    updateLevelUpSlotsInfo();
+    updateUI();
 
-    state.slowZones.forEach(z => z.draw(ctx));
+    MusicEngine.start();
+    MusicEngine.setIntensity('calm');
+}
+
+const PROGRESSION_CHECKPOINTS = new Set([180, 300, 450, 720, 900]);
+const TICK_MS = 1000 / 60;
+let lastFrameTime = performance.now();
+let accumulator = 0;
+let loopActive = false;
+
+export function updatePhysicsTick() {
+    state.frameCount++;
+
+    if (state.frameCount % 60 === 0) {
+        state.gameTime++;
+        SpawnSystem.updateGlobalDifficulty();
+        const timerEl = document.getElementById('timer-display');
+        if (timerEl) {
+            timerEl.innerText = new Date(state.gameTime * 1000).toISOString().substr(14, 5);
+        }
+    }
+
+    if (state.frameCount >= state.nextCargoFrame && !state.activeLoot && !state.airdropZones.length) {
+        SpawnSystem.spawnAirdropZone();
+        state.nextCargoFrame = state.frameCount + 60;
+    }
+
+    if (state.frameCount >= state.nextTitanFrame && state.frameCount % 60 === 0) {
+        if (SpawnSystem.spawnTitan()) state.nextTitanFrame += 300 * 60;
+    }
+
+    SpawnSystem.updateDirector();
+    DirectorEvents.update();
+    AchievementSystem.update(TICK_MS / 1000);
+
+    if (state.frameCount % 30 === 0) {
+        const hasTitan = state.enemies.some(e => e.type === 'titan' && !e.isDead);
+        if (hasTitan) {
+            MusicEngine.setIntensity('boss');
+        } else if (state.director.waveState === 'peak' || state.director.waveState === 'build') {
+            MusicEngine.setIntensity('battle');
+        } else {
+            MusicEngine.setIntensity('calm');
+        }
+    }
+
+    if (state.player) {
+        state.player.update(keys, mouse);
+    }
+
+    const sw = SCREEN_W();
+    const sh = SCREEN_H();
+    const targetCamX = clamp(state.player.x - sw / 2, 0, Math.max(0, WORLD_SIZE - sw));
+    const targetCamY = clamp(state.player.y - sh / 2, 0, Math.max(0, WORLD_SIZE - sh));
+
+    if (Number.isFinite(targetCamX)) {
+        state.camera.x += (targetCamX - (Number.isFinite(state.camera.x) ? state.camera.x : targetCamX)) * 0.1;
+    }
+    if (Number.isFinite(targetCamY)) {
+        state.camera.y += (targetCamY - (Number.isFinite(state.camera.y) ? state.camera.y : targetCamY)) * 0.1;
+    }
+    if (!Number.isFinite(state.camera.x)) state.camera.x = 0;
+    if (!Number.isFinite(state.camera.y)) state.camera.y = 0;
 
     if (state.airdropZones.length > 0) {
         const zone = state.airdropZones[0];
         zone.update();
-        zone.draw(ctx);
 
         if (zone.isCompleted) {
             playSound('powerUp');
             state.activeLoot = new YellowLootBox(zone.x, zone.y);
-            state.airdropZones = []; 
-            state.texts.push(new FloatText(state.player.x, state.player.y - 80, 'ГРУЗ ДОСТАВЛЕН!', '#ffd700', 24));
-            
-            for(let i=0; i<30; i++) {
-                 state.particles.push(new Particle(zone.x, zone.y, '#ffd700', 5 + Math.random() * 5));
+            state.airdropZones = [];
+            state.texts.push(floatTextPool.acquire(state.player.x, state.player.y - 80, 'ГРУЗ ДОСТАВЛЕН!', '#ffd700', 24));
+
+            for (let i = 0; i < 30; i++) {
+                state.particles.push(particlePool.acquire(zone.x, zone.y, '#ffd700', 5 + Math.random() * 5));
             }
         }
     }
 
-    if (state.activeLoot) {
-        state.activeLoot.draw(ctx);
+    if (state.activeLoot && state.player) {
         if (Math.hypot(state.player.x - state.activeLoot.x, state.player.y - state.activeLoot.y) < state.player.r + 40) {
             openLootBox();
         }
     }
 
-    state.barrels = state.barrels.filter(b => {
-        b.draw(ctx);
-        if (b.hp <= 0) {
-            playSound('explosion');
-            state.particles.push(new Particle(b.x, b.y, '#ff3300', 20));
-            for(let k=0; k<15; k++) state.particles.push(new Particle(b.x, b.y, '#ffaa00', 6));
-            
-            const explosionRange = 180;
-            const explosionDmg = 150;
+    CollisionSystem.rebuildSpatialGrids();
+    CollisionSystem.updateBarrels();
+    CollisionSystem.updateMines();
+    CollisionSystem.updateBullets();
+    if (state.player.hp <= 0) return;
+    CollisionSystem.updatePickups();
+    if (state.player.hp <= 0) return;
 
-            state.enemies.forEach(e => {
-                if (!e.isDead && Math.hypot(e.x - b.x, e.y - b.y) < explosionRange) {
-                    if(e.takeDamage(explosionDmg, true)) checkZoneKill(e);
-                    e.pushX = (e.x - b.x) * 0.2;
-                    e.pushY = (e.y - b.y) * 0.2;
-                }
-            });
-
-            if (Math.hypot(state.player.x - b.x, state.player.y - b.y) < explosionRange) {
-                state.player.takeDamage(30);
-                state.texts.push(new FloatText(state.player.x, state.player.y - 40, 'ВЗРЫВ!', '#ff0000', 20));
-            }
-            return false;
-        }
-        return true;
-    });
-
-    state.obstacles = state.obstacles.filter(o => {
-        if (o instanceof Mine) {
-            o.draw(ctx);
-            let triggered = false;
-            state.enemies.forEach(e => {
-                if (!e.isDead && Math.hypot(e.x - o.x, e.y - o.y) < o.range) {
-                    const dmg = 30 + (o.lvl || 1) * 15;
-                    if(e.takeDamage(dmg, false)) checkZoneKill(e);
-                    triggered = true;
-                }
-            });
-            if (triggered) {
-                playSound('explosion');
-                for(let k=0; k<10; k++) state.particles.push(new Particle(o.x, o.y, '#f00', 3));
-                return false;
-            }
-            return true;
-        } else {
-            o.draw(ctx);
-            return true;
-        }
-    });
-
-    for (let i = state.bullets.length - 1; i >= 0; i--) {
-        let b = state.bullets[i];
-        b.update();
-        b.draw(ctx);
-        if (b.life <= 0) {
-            state.bullets.splice(i, 1);
-            continue;
-        }
-        
-        if (b.isPlayer) {
-            for (let k = 0; k < state.barrels.length; k++) {
-                let barrel = state.barrels[k];
-                if (Math.hypot(barrel.x - b.x, barrel.y - b.y) < barrel.radius + b.size) {
-                    barrel.hp -= b.dmg;
-                    b.life = 0;
-                    b.spawnParticles('#ff5500', 3);
-                    break;
-                }
-            }
-            if (b.life <= 0) {
-                state.bullets.splice(i, 1);
-                continue;
-            }
-        }
-
-        for (let j = state.enemies.length - 1; j >= 0; j--) {
-            let e = state.enemies[j];
-            if (e.isDead) continue;
-            if (Math.hypot(e.x - b.x, e.y - b.y) < e.size + (b.size || 5)) {
-                if (!b.hitList.includes(j)) {
-                    const killed = e.takeDamage(b.dmg, b.isCrit);
-                    if (killed) checkZoneKill(e);
-
-                    if (b.pierce > 0) {
-                        b.pierce--;
-                        b.hitList.push(j);
-                    } else {
-                        b.life = 0;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
-        let b = state.enemyBullets[i];
-        b.update();
-        b.draw(ctx);
-        if (b.life <= 0) {
-            state.enemyBullets.splice(i, 1);
-            continue;
-        }
-        if (Math.hypot(state.player.x - b.x, state.player.y - b.y) < state.player.r + 5) {
-            state.player.takeDamage(10);
-            playSound('hit');
-            state.enemyBullets.splice(i, 1);
-        }
-    }
-
-    state.enemies = state.enemies.filter(e => {
+    for (let i = state.enemies.length - 1; i >= 0; i--) {
+        const e = state.enemies[i];
         e.update();
-        e.draw(ctx);
-        return !e.isDead;
-    });
-
-    if (state.chips) {
-        for (let i = state.chips.length - 1; i >= 0; i--) {
-            let c = state.chips[i];
-            const d = Math.hypot(state.player.x - c.x, state.player.y - c.y);
-            
-            if (d < state.player.stats.magnet) c.mag = true;
-            if (c.mag) {
-                c.x += (state.player.x - c.x) * 0.15;
-                c.y += (state.player.y - c.y) * 0.15;
-            }
-
-            if (d < state.player.r) {
-                Meta.addCurrency(c.val);
-                state.texts.push(new FloatText(state.player.x, state.player.y - 20, `+$${c.val}`, '#ffd700'));
-                playSound('powerUp');
-                state.chips.splice(i, 1);
-            } else {
-                c.draw(ctx);
-            }
+        if (state.player.hp <= 0) return;
+        if (e.isDead) {
+            enemyPool.release(e);
+            const last = state.enemies.pop();
+            if (i < state.enemies.length) state.enemies[i] = last;
         }
     }
 
-    if (state.gems.length > 300) state.gems.splice(0, 50);
-    for (let i = state.gems.length - 1; i >= 0; i--) {
-        let g = state.gems[i];
-        const d = Math.hypot(state.player.x - g.x, state.player.y - g.y);
-        if (d < state.player.stats.magnet) g.mag = true;
-        if (g.mag) {
-            g.x += (state.player.x - g.x) * 0.12;
-            g.y += (state.player.y - g.y) * 0.12;
-        }
-        if (d < state.player.r) {
-            state.player.gainXp(g.val);
-            state.gems.splice(i, 1);
-        } else {
-            const sx = g.x - state.camera.x;
-            const sy = g.y - state.camera.y;
-            if (sx > -10 && sx < SCREEN_W() && sy > -10 && sy < SCREEN_H()) {
-                ctx.fillStyle = '#0f0';
-                ctx.fillRect(sx - 3, sy - 3, 6, 6);
-            }
+    for (let i = state.particles.length - 1; i >= 0; i--) {
+        const p = state.particles[i];
+        p.update();
+        if (p.life <= 0) {
+            particlePool.release(p);
+            const last = state.particles.pop();
+            if (i < state.particles.length) state.particles[i] = last;
         }
     }
 
-    state.particles = state.particles.filter(p => { p.update(); p.draw(ctx); return p.life > 0; });
-    state.texts = state.texts.filter(t => { t.update(); t.draw(ctx); return t.life > 0; });
+    for (let i = state.texts.length - 1; i >= 0; i--) {
+        const t = state.texts[i];
+        t.update();
+        if (t.life <= 0) {
+            floatTextPool.release(t);
+            const last = state.texts.pop();
+            if (i < state.texts.length) state.texts[i] = last;
+        }
+    }
 
-    state.player.draw(ctx);
+    DamageTextSystem.update();
+    if (state.frameCount % 60 === 0 && PROGRESSION_CHECKPOINTS.has(state.gameTime)) {
+        const snapshot = captureXpTelemetrySnapshot();
+        state.xpTelemetry.checkpoints.push(snapshot);
+        if (state.gameTime === 300) state.xpTelemetry.snapshot5m = snapshot;
+    }
+}
+
+function renderFrame() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const shake = RenderSystem.beginShakeFrame();
+
+    RenderSystem.drawGrid(ctx);
+
+    for (let i = 0; i < state.slowZones.length; i++) {
+        state.slowZones[i].draw(ctx);
+    }
+
+    if (state.airdropZones.length > 0) {
+        state.airdropZones[0].draw(ctx);
+    }
+
+    if (state.activeLoot) {
+        state.activeLoot.draw(ctx);
+    }
+
+    CollisionSystem.drawBarrels(ctx);
+
+    for (let i = 0; i < state.obstacles.length; i++) {
+        state.obstacles[i].draw(ctx);
+    }
+
+    CollisionSystem.drawMines(ctx);
+    CollisionSystem.drawPlayerBullets(ctx);
+    RenderSystem.drawDirectorEvents(ctx);
+
+    for (let i = 0; i < state.enemies.length; i++) {
+        state.enemies[i].draw(ctx);
+    }
+
+    CollisionSystem.drawPickups(ctx);
+
+    for (let i = 0; i < state.particles.length; i++) {
+        state.particles[i].draw(ctx);
+    }
+
+    if (state.player) {
+        state.player.draw(ctx);
+    }
+
+    for (let i = 0; i < state.texts.length; i++) {
+        state.texts[i].draw(ctx);
+    }
+
+    for (const enemy of state.enemies) enemy.drawTelegraph(ctx);
+    CollisionSystem.drawEnemyBullets(ctx);
+    DamageTextSystem.draw(ctx);
+
+    RenderSystem.endShakeFrame(shake);
+
+    RadarSystem.draw(ctx);
+
     updateIndicators();
     updateUI();
+}
 
-    if (state.isRunning && !state.isPaused) {
+function isElementVisible(id) {
+    const el = document.getElementById(id);
+    return !!(el && !el.classList.contains('hidden'));
+}
+
+function isAnyPauseReasonActive() {
+    if (manualPauseActive) return true;
+    if (activeChoiceType !== null) return true;
+    if (isElementVisible('pause-menu') || isElementVisible('abilities-overlay')) return true;
+    if (isElementVisible('levelup-screen')) return true;
+    if (isElementVisible('audio-settings-screen') && audioPrevScreen === 'pause-menu') return true;
+    return false;
+}
+
+export function syncPauseAndLoop() {
+    if (!state.isRunning) {
+        stopGameLoop();
+        return;
+    }
+
+    const shouldPause = isAnyPauseReasonActive();
+    state.isPaused = shouldPause;
+
+    if (shouldPause) {
+        stopGameLoop();
+    } else if (animationId === null && !loopActive) {
+        lastFrameTime = performance.now();
         animationId = requestAnimationFrame(gameLoop);
     }
 }
 
-function getPowerScore() {
-    const totalSkillLevels = Object.values(state.player.skills).reduce((a, b) => a + b, 0);
-    return (state.player.lvl * 10) + (totalSkillLevels * 5) + (state.gameTime * 0.5);
+export function getLoopDebugState() {
+    return {
+        animationId,
+        loopActive,
+        isRunning: state.isRunning,
+        isPaused: state.isPaused,
+        manualPauseActive,
+        activeChoiceType,
+        pendingSkillBoxes
+    };
 }
 
-function updateDirector() {
-    const dir = state.director;
-    dir.stateTimer++;
-    
-    let currentPhaseConfig = WAVE_CYCLE[0];
-    let timeAccum = 0;
-    
-    const totalCycleTime = WAVE_CYCLE.reduce((acc, phase) => acc + phase.duration, 0) * 60;
-    const currentCycleFrame = state.frameCount % totalCycleTime;
-    
-    for (let phase of WAVE_CYCLE) {
-        const phaseDurationFrames = phase.duration * 60;
-        if (currentCycleFrame < timeAccum + phaseDurationFrames) {
-            currentPhaseConfig = phase;
-            break;
+function gameLoop(now = performance.now()) {
+    animationId = null;
+
+    if (!state.isRunning || state.isPaused) return;
+
+    if (loopActive) return;
+    loopActive = true;
+
+    try {
+
+        let dt = now - lastFrameTime;
+        if (dt > 250) dt = 250;
+        lastFrameTime = now;
+        accumulator += dt;
+
+        let maxTicks = 5;
+        while (accumulator >= TICK_MS && maxTicks > 0) {
+            if (!state.isRunning || state.isPaused) break;
+            if (state.hitStop > 0) state.hitStop--;
+            else updatePhysicsTick();
+            accumulator -= TICK_MS;
+            maxTicks--;
+            if (!state.isRunning || state.isPaused) break;
         }
-        timeAccum += phaseDurationFrames;
-    }
-    dir.waveState = currentPhaseConfig.state;
 
-    if (state.frameCount < dir.nextSpawn) return;
-    dir.nextSpawn = state.frameCount + dir.spawnRate;
-
-    const powerScore = getPowerScore();
-    const baseMaxEnemies = 20 + (powerScore / 50); 
-    const maxEnemies = Math.min(250, baseMaxEnemies * currentPhaseConfig.limitMult);
-
-    if (state.enemies.length >= maxEnemies) return;
-
-    const budgetBase = 2 + (powerScore / 30);
-    dir.credits += budgetBase * currentPhaseConfig.budgetMult * state.globalDifficulty;
-
-    dir.credits = Math.min(dir.credits, 100 + powerScore / 5);
-
-    spawnWave();
-}
-
-function spawnWave() {
-    const dir = state.director;
-    
-    const availableTypes = Object.keys(ENEMY_DATA).filter(type => state.gameTime >= ENEMY_DATA[type].minTime);
-    
-    if (availableTypes.length === 0) availableTypes.push('basic');
-
-    let packsSpawnedThisFrame = 0;
-    const MAX_PACKS_PER_FRAME = 3;
-    const spawnedTypes = new Set();
-
-    let attempts = 10;
-    
-    while (dir.credits > 0 && attempts > 0 && packsSpawnedThisFrame < MAX_PACKS_PER_FRAME) {
-        
-        let candidates = availableTypes.filter(t => !spawnedTypes.has(t));
-        if (candidates.length === 0) candidates = availableTypes;
-
-        const type = candidates[Math.floor(Math.random() * candidates.length)];
-        const data = ENEMY_DATA[type];
-
-        if (dir.credits >= data.cost) {
-            const packSize = Math.floor(Math.random() * (data.packSize[1] - data.packSize[0] + 1)) + data.packSize[0];
-            
-            spawnEnemyPack(type, packSize);
-            
-            dir.credits -= data.cost * packSize;
-            packsSpawnedThisFrame++;
-            spawnedTypes.add(type);
-        } else {
-            attempts--;
+        if (state.isRunning && !state.isPaused) {
+            renderFrame();
         }
-        
-        if (dir.credits < 1) break;
-    }
-}
 
-function spawnEnemyPack(type, count) {
-    let centerX, centerY, safe = false;
-    
-    for (let k = 0; k < 5; k++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = (Math.max(SCREEN_W(), SCREEN_H()) / 2) + 100 + Math.random() * 200;
-        
-        centerX = state.player.x + Math.cos(angle) * dist;
-        centerY = state.player.y + Math.sin(angle) * dist;
-        
-        centerX = clamp(centerX, 50, WORLD_SIZE - 50);
-        centerY = clamp(centerY, 50, WORLD_SIZE - 50);
-        
-        if (!checkWall(centerX, centerY, 40)) {
-            safe = true;
-            break;
+        if (state.isRunning && !state.isPaused && animationId === null) {
+            animationId = requestAnimationFrame(gameLoop);
         }
-    }
-
-    if (!safe) return;
-
-    for (let i = 0; i < count; i++) {
-        const offsetX = (Math.random() - 0.5) * 60;
-        const offsetY = (Math.random() - 0.5) * 60;
-        
-        const x = clamp(centerX + offsetX, 50, WORLD_SIZE - 50);
-        const y = clamp(centerY + offsetY, 50, WORLD_SIZE - 50);
-
-        if (!checkWall(x, y, 20)) {
-            state.enemies.push(new Enemy(type, x, y));
-        }
+    } finally {
+        loopActive = false;
     }
 }
 
-function drawGrid() {
-    const half = WORLD_SIZE / 2;
-    const px = state.player.x;
-    const py = state.player.y;
-    
-    let gridColor = '#111';
-    if (px < half && py < half) gridColor = '#001133';
-    else if (px >= half && py < half) gridColor = '#1a1a00';
-    else if (px < half && py >= half) gridColor = '#1a0d05';
-    else gridColor = '#1a0000';
-
-    ctx.fillStyle = gridColor;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.strokeStyle = '#222';
-    ctx.lineWidth = 1;
-    const ox = state.camera.x % 100;
-    const oy = state.camera.y % 100;
-    ctx.beginPath();
-    for (let x = -ox; x < SCREEN_W(); x += 100) { ctx.moveTo(x, 0); ctx.lineTo(x, SCREEN_H()); }
-    for (let y = -oy; y < SCREEN_H(); y += 100) { ctx.moveTo(0, y); ctx.lineTo(SCREEN_W(), y); }
-    ctx.stroke();
-}
-
-function spawnTitan() {
-    let x, y, safe = false;
-    for (let k = 0; k < 10; k++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 500; 
-        x = state.player.x + Math.cos(angle) * dist;
-        y = state.player.y + Math.sin(angle) * dist;
-        x = clamp(x, 50, WORLD_SIZE - 50);
-        y = clamp(y, 50, WORLD_SIZE - 50);
-        if (!checkWall(x, y, 60)) {
-            safe = true;
-            break;
-        }
-    }
-    if (safe) {
-        state.enemies.push(new Enemy('titan', x, y));
-        state.texts.push(new FloatText(state.player.x, state.player.y - 150, 'ОПАСНОСТЬ: ТИТАН!', '#f00', 36));
-        playSound('explosion'); 
-    }
-}
-
-function spawnAirdropZone() {
-    let x, y, safe = false;
-    for (let k = 0; k < 10; k++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 300 + Math.random() * 400;
-        x = state.player.x + Math.cos(angle) * dist;
-        y = state.player.y + Math.sin(angle) * dist;
-        
-        x = clamp(x, 200, WORLD_SIZE - 200);
-        y = clamp(y, 200, WORLD_SIZE - 200);
-        
-        if (!checkWall(x, y, 150)) { safe = true; break; }
-    }
-    
-    if (safe) {
-        state.airdropZones.push(new AirdropZone(x, y));
-        state.texts.push(new FloatText(state.player.x, state.player.y - 100, 'ЗОНА СБРОСА!', '#00ffff', 24));
-    }
-}
-
-function checkZoneKill(enemy) {
-    if (state.airdropZones.length > 0) {
-        const zone = state.airdropZones[0];
-        if (zone.isActivated && !zone.isCompleted && zone.taskType === 'kills') {
-            const distPlayer = Math.hypot(state.player.x - zone.x, state.player.y - zone.y);
-            if (distPlayer < zone.radius) {
-                zone.current++;
-                state.texts.push(new FloatText(enemy.x, enemy.y, '+1 KILL', '#ffff00', 16));
-            }
-        }
-    }
-}
-
-function openLootBox() {
+export function openLootBox() {
     playSound('powerUp');
-    state.activeLoot = null; 
-    
+    state.activeLoot = null;
+    state.nextCargoFrame = state.frameCount + BALANCE.cargoCooldownTicks;
+
     const rand = Math.random();
     if (rand < 0.4) {
-        const healAmt = 25 + Math.floor(Math.random() * 15); 
+        const healAmt = 25 + Math.floor(Math.random() * 15);
         state.player.heal(healAmt);
-        state.texts.push(new FloatText(state.player.x, state.player.y - 60, `АПТЕЧКА +${healAmt}`, '#0f0', 24));
+        state.texts.push(floatTextPool.acquire(state.player.x, state.player.y - 60, `АПТЕЧКА +${healAmt}`, '#0f0', 24));
     } else {
         pauseGameForSkillBox();
     }
 }
 
-function pauseGameForSkillBox() {
-    if (animationId) cancelAnimationFrame(animationId);
-    state.isPaused = true;
-    
+export function getAvailableSkills() {
+    if (!state.player) return [];
+    return state.player.getAvailableSkills();
+}
+
+export function getEvoCandidates() {
+    if (!state.player) return [];
+    return state.player.getEvoCandidates();
+}
+
+function getCardWeight(key) {
+    const cfg = BALANCE.cardWeighting;
+    let weight = 1;
+
+    if (state.player.getSkillLvl(key) > 0) {
+        weight += cfg.ownedBonus;
+    }
+
+    const def = SKILL_DB[key];
+    const level = state.player.getSkillLvl(key);
+    if (level > 0 && def.evolveTo && state.player.getSkillLvl(def.require) > 0) {
+        weight += cfg.recipeProgressBonus * Math.max(0, level - 1);
+    }
+
+    if (def.type === 'passive' && level === 0) {
+        let bestWeaponLevel = 0;
+        for (const [id, ownedLvl] of Object.entries(state.player.skills)) {
+            if (SKILL_DB[id]?.require === key) bestWeaponLevel = Math.max(bestWeaponLevel, ownedLvl);
+        }
+        weight += cfg.evoRequireBonus * bestWeaponLevel;
+    }
+
+    return weight;
+}
+
+function weightedSample(keys, count) {
+    const pool = keys.map(key => ({ key, weight: getCardWeight(key) }));
+    const picked = [];
+    for (let i = 0; i < count && pool.length > 0; i++) {
+        const totalWeight = pool.reduce((sum, p) => sum + p.weight, 0);
+        let roll = Math.random() * totalWeight;
+        let idx = 0;
+        for (; idx < pool.length - 1; idx++) {
+            roll -= pool[idx].weight;
+            if (roll <= 0) break;
+        }
+        picked.push(pool[idx].key);
+        pool.splice(idx, 1);
+    }
+    return picked;
+}
+
+function updateLevelUpSlotsInfo() {
+    const el = document.getElementById('levelup-slots-info');
+    if (!el || !state.player) return;
+    const slots = state.player.getSlotCounts();
+    el.innerText = `Оружие ${slots.weapons}/${slots.maxWeapons} • Пассивки ${slots.passives}/${slots.maxPassives}`;
+    const hud = document.getElementById('hud-slots');
+    if (hud) hud.textContent = el.innerText;
+}
+
+function grantFallbackChipReward(label = 'ЛИМИТ СБОРКИ', source = 'levelup') {
+    if (!state.player) return;
+    recordFallbackChipReward(source, label);
+    Meta.addCurrency(FALLBACK_SKILL_REWARD_CHIPS);
+    state.sessionChips += FALLBACK_SKILL_REWARD_CHIPS;
+    state.texts.push(
+        floatTextPool.acquire(
+            state.player.x,
+            state.player.y - 70,
+            `${label}: +${FALLBACK_SKILL_REWARD_CHIPS} ЧИПОВ`,
+            '#ffd700',
+            22
+        )
+    );
+    updateUI();
+}
+
+export function pauseGameForSkillBox() {
+    if (!state.player) return;
+    pendingSkillBoxes++;
+    if (activeChoiceType === null) {
+        processNextPendingChoice();
+    }
+}
+
+export function handleLevelUp() {
+    if (!state.player) return;
+    if (state.player.xp < state.player.nextXp) {
+        pendingDirectLevelUps++;
+    }
+    if (activeChoiceType === null) {
+        processNextPendingChoice();
+    }
+}
+
+function processNextPendingChoice() {
     const screen = document.getElementById('levelup-screen');
-    document.getElementById('sys-msg').innerText = 'РАСШИФРОВКА ДАННЫХ...';
+    const container = document.getElementById('cards-box');
+    const controls = document.getElementById('levelup-controls');
+
+    activeChoiceType = null;
+    currentChoiceResolved = false;
+    banishMode = false;
+
+    if (!state.player) {
+        screen?.classList.add('hidden');
+        syncPauseAndLoop();
+        return;
+    }
+
+    while (pendingSkillBoxes > 0) {
+        pendingSkillBoxes--;
+        const available = getAvailableSkills();
+        if (available.length === 0) {
+            grantFallbackChipReward('ГРУЗ АКАДЕМИИ', 'skillbox');
+            continue;
+        }
+
+        activeChoiceType = 'skillbox';
+        currentChoiceResolved = false;
+        stopGameLoop();
+        state.isPaused = true;
+
+        document.getElementById('sys-msg').innerText = 'ГРУЗ АКАДЕМИИ...';
+        controls.style.display = 'none';
+        updateLevelUpSlotsInfo();
+        screen.classList.remove('hidden');
+        container.innerHTML = '';
+
+        const key = weightedSample(available, 1)[0];
+        createCard(key, container, screen, false);
+        syncPauseAndLoop();
+        return;
+    }
+
+    while (pendingDirectLevelUps > 0 || state.player.xp >= state.player.nextXp) {
+        if (state.player.xp >= state.player.nextXp) {
+            state.player.xp -= state.player.nextXp;
+        } else {
+            pendingDirectLevelUps--;
+        }
+        playSound('levelup');
+        state.player.leveling = true;
+        state.player.lvl++;
+        state.player.nextXp = getXpThresholdForLevel(state.player.lvl);
+
+        if (state.xpTelemetry?.lastPendingTitanEntry) {
+            const tp = state.xpTelemetry.lastPendingTitanEntry;
+            tp.lvlAfter = state.player.lvl;
+            tp.xpAfter = state.player.xp;
+            tp.nextXpAfter = state.player.nextXp;
+        }
+
+        const evos = getEvoCandidates();
+        if (evos.length > 0) {
+            activeChoiceType = 'evo';
+            currentChoiceResolved = false;
+            stopGameLoop();
+            state.isPaused = true;
+
+            controls.style.display = 'none';
+            updateLevelUpSlotsInfo();
+            screen.classList.remove('hidden');
+            document.getElementById('sys-msg').innerText = 'ДОСТУПНА СИНЕРГИЯ!';
+            container.innerHTML = '';
+
+            evos.forEach(evoKey => createCard(evoKey, container, screen, false));
+            syncPauseAndLoop();
+            return;
+        }
+
+        const available = getAvailableSkills();
+        if (available.length === 0) {
+            grantFallbackChipReward('ЛИМИТ СБОРКИ', 'levelup');
+            continue;
+        }
+
+        activeChoiceType = 'levelup';
+        currentChoiceResolved = false;
+        stopGameLoop();
+        state.isPaused = true;
+        renderUpgradeChoices();
+        syncPauseAndLoop();
+        return;
+    }
+
+    if (state.xpTelemetry?.lastPendingTitanEntry) {
+        const tp = state.xpTelemetry.lastPendingTitanEntry;
+        tp.lvlAfter = state.player.lvl;
+        tp.xpAfter = state.player.xp;
+        tp.nextXpAfter = state.player.nextXp;
+        tp.pendingResolution = false;
+        state.xpTelemetry.lastPendingTitanEntry = null;
+    }
+
+    state.player.leveling = false;
+    controls.style.display = 'none';
+    screen.classList.add('hidden');
+    updateUI();
+    syncPauseAndLoop();
+}
+
+export function renderUpgradeChoices() {
+    const screen = document.getElementById('levelup-screen');
+    const container = document.getElementById('cards-box');
+    const controls = document.getElementById('levelup-controls');
+
+    banishMode = false;
+    updateLevelUpSlotsInfo();
+
+    const available = getAvailableSkills();
+
+    if (available.length === 0) {
+        if (!currentChoiceResolved) {
+            currentChoiceResolved = true;
+            grantFallbackChipReward('ЛИМИТ СБОРКИ', activeChoiceType || 'levelup');
+        }
+        processNextPendingChoice();
+        return;
+    }
+
     screen.classList.remove('hidden');
-    
-    const available = Object.keys(SKILL_DB).filter(k => state.player.getSkillLvl(k) < SKILL_DB[k].max);
-    const container = document.getElementById('cards-box');
-    container.innerHTML = '';
-    
-    if (available.length === 0) {
-        screen.classList.add('hidden');
-        state.player.hp = Math.min(state.player.maxHp, state.player.hp + 100);
-        state.player.gainXp(500);
-        state.texts.push(new FloatText(state.player.x, state.player.y - 60, 'MAX POWER: AUTO HEAL!', '#ffd700', 20));
-        state.isPaused = false;
-        gameLoop();
-        return;
-    }
-    
-    const key = available[Math.floor(Math.random() * available.length)];
-    createCard(key, container, screen);
-}
-
-function handleLevelUp() {
-    playSound('levelup');
-    if (animationId) cancelAnimationFrame(animationId);
-    state.isPaused = true;
-    
-    state.player.xp -= state.player.nextXp;
-    state.player.lvl++;
-    state.player.nextXp = Math.floor(50 + state.player.lvl * 25 + Math.pow(state.player.lvl, 1.2) * 5);
-    
-    const available = Object.keys(SKILL_DB).filter(k => state.player.getSkillLvl(k) < SKILL_DB[k].max);
-    
-    if (available.length === 0) {
-        state.player.hp = state.player.maxHp;
-        state.texts.push(new FloatText(state.player.x, state.player.y - 80, 'LIMIT BREAK: HP RESTORED', '#ffd700', 24));
-        state.isPaused = false;
-        gameLoop();
-        return;
-    }
-    
-    document.getElementById('levelup-screen').classList.remove('hidden');
     document.getElementById('sys-msg').innerText = 'Выберите улучшение';
-    const container = document.getElementById('cards-box');
     container.innerHTML = '';
-    
-    let pool = available;
-    pool.sort(() => Math.random() - 0.5);
-    const choices = pool.slice(0, 3);
-    
-    choices.forEach(key => createCard(key, container, document.getElementById('levelup-screen')));
+
+    const choices = weightedSample(available, BALANCE.cardWeighting.cardsShown);
+
+    choices.forEach(key => createCard(key, container, screen, true));
+
+    controls.style.display = 'flex';
+    updateLevelUpControls();
 }
 
-function createCard(key, container, screen) {
+function updateLevelUpControls() {
+    document.getElementById('reroll-count').innerText = state.player.rerollCharges;
+    document.getElementById('reroll-btn').disabled = state.player.rerollCharges <= 0;
+    document.getElementById('banish-btn').classList.toggle('active', banishMode);
+    document.getElementById('cards-box').classList.toggle('banish-mode', banishMode);
+}
+
+function createCard(key, container, screen, allowBanish = false) {
     const skill = SKILL_DB[key];
     const nextLvl = state.player.getSkillLvl(key) + 1;
-    const isEvo = skill.evolveAt && nextLvl === skill.evolveAt;
-    
-    const c = document.createElement('div');
+    const isEvo = skill.type === 'evo';
+
+    const c = document.createElement('button');
+    c.type = 'button';
+    c.dataset.skill = key;
     c.className = 'upgrade-card ' + (isEvo ? 'card-evo' : (nextLvl === 1 ? 'card-new' : 'card-upgrade'));
-    c.innerHTML = `<div class="card-type">${skill.type}</div>
-                   <div class="card-title">${skill.name} <span style="color:#ffd700">Lvl ${nextLvl}</span></div>
-                   <div class="card-desc">${skill.desc}</div>
-                   ${isEvo ? `<div style="color:#ff0055;font-size:11px;margin-top:6px;font-weight:bold">⚡ ЭВО: ${skill.evoDesc}</div>` : ''}`;
-    
-    c.onclick = () => {
-        state.player.addSkill(key);
-        state.isPaused = false;
-        screen.classList.add('hidden');
-        gameLoop();
+
+    const slots = state.player.getSlotCounts();
+    const weapon = getSkillSlotCategory(key) === 'weapon';
+    const used = weapon ? slots.weapon : slots.passive;
+    const category = weapon ? 'Оружие' : 'Пассивка';
+    const slotText = isEvo ? 'Эволюция' : nextLvl === 1 ? category + ' · слот ' + (used + 1) + '/4' : category + ' · улучшение';
+    const delta = skillPreview(state.player, key);
+    const recipe = skill.require ? SKILL_DB[skill.require] : null;
+    const ready = recipe && state.player.getSkillLvl(skill.require) > 0;
+    const recipeText = recipe ? `<div class="recipe-note">${SKILL_DB[skill.evolveTo].name} · ${recipe.name}${ready ? ' ✓' : ' ур. 1'}</div>` : '';
+    c.innerHTML = `<span class="choice-head"><span class="card-type">${slotText}</span><span class="card-rank">${isEvo ? '◆' : nextLvl + '/' + skill.max}</span></span>
+        <strong class="card-title">${skill.name}</strong><span class="card-desc">${skill.desc}</span><span class="card-delta">${delta}</span>${recipeText}`;
+    c.querySelector('.choice-head').appendChild(makeModuleIcon(key, 39));
+
+    c.onkeydown = event => {
+        if (event.repeat && (event.key === 'Enter' || event.key === ' ')) event.preventDefault();
+    };
+    let pressedHere = false;
+    c.onpointerdown = () => { pressedHere = true; };
+    c.onpointercancel = () => { pressedHere = false; };
+    c.onclick = event => {
+        if (c.isConnected === false || (event?.detail > 0 && !pressedHere)) return;
+        pressedHere = false;
+        if (!state.player || !activeChoiceType || currentChoiceResolved) return;
+
+        if (allowBanish && banishMode) {
+            state.player.banishedSkills.add(key);
+            state.texts.push(floatTextPool.acquire(state.player.x, state.player.y - 60, `ИЗГНАН: ${skill.name}`, '#ff0055', 18));
+            playSound('hit');
+            renderUpgradeChoices();
+            return;
+        }
+
+        const choiceOrigin = activeChoiceType || 'levelup';
+        const added = state.player.addSkill(key, choiceOrigin);
+        if (!added) return;
+
+        currentChoiceResolved = true;
+        updateLevelUpSlotsInfo();
+        playSound('powerUp');
+        processNextPendingChoice();
     };
     container.appendChild(c);
 }
 
 function toggleAbilities() {
-    if (!state.isRunning) return;
+    if (!state.isRunning || activeChoiceType || manualPauseActive) return;
     const overlay = document.getElementById('abilities-overlay');
     if (overlay.classList.contains('hidden')) {
         renderAbilities();
         overlay.classList.remove('hidden');
+        document.getElementById('close-build').focus?.();
     } else {
         overlay.classList.add('hidden');
+        canvas.focus?.({preventScroll:true});
     }
+    syncPauseAndLoop();
 }
 
-function togglePause() {
+export function togglePause() {
     if (!state.isRunning) return;
     if (!document.getElementById('levelup-screen').classList.contains('hidden')) return;
-    
+
     const abilitiesOverlay = document.getElementById('abilities-overlay');
-    if (!abilitiesOverlay.classList.contains('hidden')) {
-        abilitiesOverlay.classList.add('hidden');
+    abilitiesOverlay.classList.add('hidden');
+
+    const audioScreen = document.getElementById('audio-settings-screen');
+    if (audioScreen && !audioScreen.classList.contains('hidden') && audioPrevScreen === 'pause-menu') {
+        audioScreen.classList.add('hidden');
+        document.getElementById('pause-menu').classList.remove('hidden');
+        syncPauseAndLoop();
         return;
     }
-    
-    state.isPaused = !state.isPaused;
+
+    manualPauseActive = !manualPauseActive;
     const menu = document.getElementById('pause-menu');
-    
-    if (state.isPaused) {
+
+    if (manualPauseActive) {
         menu.classList.remove('hidden');
-        if (animationId) cancelAnimationFrame(animationId);
         renderStats();
     } else {
         menu.classList.add('hidden');
-        if (animationId) cancelAnimationFrame(animationId);
-        gameLoop();
     }
+    syncPauseAndLoop();
 }
 
-function gameOver() {
+export function gameOver() {
+    if (!state.isRunning) return;
     state.isRunning = false;
-    if (animationId) cancelAnimationFrame(animationId);
-    document.getElementById('overlay-screen').classList.remove('hidden');
+    manualPauseActive = false;
+    activeChoiceType = null;
+    currentChoiceResolved = false;
+    pendingSkillBoxes = 0;
+    pendingDirectLevelUps = 0;
+    stopGameLoop();
+    MusicEngine.setIntensity('menu');
+    document.getElementById('levelup-screen')?.classList.add('hidden');
+    document.getElementById('pause-menu')?.classList.add('hidden');
+    openStation('overlay-screen');
     document.getElementById('abilities-overlay').classList.add('hidden');
-    
-    const phrases = ['СИГНАЛ ПОТЕРЯН', 'КРИТИЧЕСКИЙ СБОЙ', 'СИСТЕМА ОФФЛАЙН'];
-    document.getElementById('death-report').innerText = `${phrases[Math.floor(Math.random() * phrases.length)]}
-    Выживание: ${new Date(state.gameTime * 1000).toISOString().substr(14, 5)}
-    Уровень: ${state.player.lvl}
-    Заработано чипов: ${Math.floor(state.score / 10) }`;
-    
-    document.querySelector('#overlay-screen h1').innerText = 'ИГРА ОКОНЧЕНА';
-    document.getElementById('start-btn').innerText = 'ПЕРЕЗАГРУЗКА';
+
+    const causeLabel = ENEMY_LABELS[state.lastDamageSource] || 'НЕИЗВЕСТНАЯ ПРИЧИНА';
+
+    let newDirective = null;
+    if (state.gameTime >= 120 && state.sessionKills === 0) {
+        if (AchievementSystem.unlock('pacifist')) {
+            newDirective = ACHIEVEMENTS_DB.pacifist.name;
+        }
+    }
+
+    Meta.recordRunEnd({
+        duration: state.gameTime,
+        kills: state.sessionKills,
+        level: state.player.lvl,
+        score: state.score,
+        chipsEarned: state.sessionChips,
+        cause: causeLabel,
+        enemyKills: state.sessionEnemyKills
+    });
+
+    const time = new Date(state.gameTime * 1000).toISOString().slice(14,19);
+    document.getElementById('death-report').innerText = `Забег окончен · ${time} · Уровень ${state.player.lvl}\nЧипы +${state.sessionChips} · Последний удар — ${causeLabel}${newDirective ? '\\nДиректива — ' + newDirective : ''}`;
+
+    document.getElementById('overlay-screen').classList.add('run-ended');
+    document.getElementById('start-btn').innerText = 'Новый забег';
     document.getElementById('open-shop-btn').classList.remove('hidden');
 }
 
-function openShop() {
-    const shopScreen = document.getElementById('shop-screen');
-    const container = document.getElementById('shop-container');
-    
-    shopScreen.classList.remove('hidden');
-    document.getElementById('overlay-screen').classList.add('hidden');
-    Meta.updateUI();
+const stationPages = {
+    'overlay-screen': 'station-home',
+    'chassis-screen': 'chassis-btn',
+    'shop-screen': 'open-shop-btn',
+    'database-screen': 'open-database-btn',
+    'profile-screen': 'open-profile-btn'
+};
+const stationRenderers = {
+    'overlay-screen': updateHangar,
+    'chassis-screen': openFleet,
+    'shop-screen': openWorkshop,
+    'database-screen': openArchive,
+    'profile-screen': renderProfile
+};
+let stationPage = 'overlay-screen';
 
-    container.innerHTML = '';
-    Object.values(UPGRADES).forEach(upg => {
-        const lvl = Meta.data.upgrades[upg.id];
-        const cost = Meta.getUpgradeCost(upg.id);
-        
-        const div = document.createElement('div');
-        div.className = 'shop-card';
-        div.innerHTML = `
-            <h3>${upg.name} (Lvl ${lvl})</h3>
-            <div class="desc">${upg.desc}</div>
-            <div class="cost" style="color:${cost === 'MAX' ? '#f00' : '#ffd700'}">
-                Цена: ${cost === 'MAX' ? 'MAX' : cost + ' $'}
-            </div>
-            ${cost !== 'MAX' ? `<button class="shop-btn" data-id="${upg.id}">КУПИТЬ</button>` : ''}
-        `;
-        container.appendChild(div);
-    });
-
-    container.querySelectorAll('.shop-btn').forEach(btn => {
-        btn.onclick = () => {
-            const id = btn.getAttribute('data-id');
-            if (Meta.buyUpgrade(id)) {
-                openShop();
-                playSound('powerUp');
-            } else {
-            }
-        };
-    });
+function openStation(id) {
+    const screen = document.getElementById(id);
+    if (!screen) return;
+    stationPage = id;
+    for (const [page, nav] of Object.entries(stationPages)) {
+        document.getElementById(page).classList.toggle('hidden', page !== id);
+        const button = document.getElementById(nav);
+        if (page === id) button.setAttribute?.('aria-current','page');
+        else button.removeAttribute?.('aria-current');
+    }
+    stationRenderers[id]();
+    screen.scrollTop = 0;
 }
 
-document.getElementById('open-shop-btn').onclick = openShop;
-document.getElementById('close-shop-btn').onclick = () => {
-    document.getElementById('shop-screen').classList.add('hidden');
-    document.getElementById('overlay-screen').classList.remove('hidden');
+for (const [page, nav] of Object.entries(stationPages)) {
+    document.getElementById(nav).onclick = () => openStation(page);
+}
+document.getElementById('hangar-change').onclick = () => {
+    openStation('chassis-screen');
+    document.getElementById('chassis-container').querySelector('[aria-pressed="true"]')?.focus?.();
+};
+document.getElementById('close-profile-btn').onclick = () => {
+    openStation('overlay-screen');
+    document.getElementById('open-profile-btn').focus?.();
+};
+document.getElementById('close-build').onclick = toggleAbilities;
+document.getElementById('hud-build').onclick = toggleAbilities;
+
+let audioPrevScreen = 'overlay-screen';
+document.getElementById('open-audio-btn').onclick = () => {
+    audioPrevScreen = stationPage;
+    document.getElementById(stationPage).classList.add('hidden');
+    document.getElementById('audio-settings-screen').classList.remove('hidden');
+    renderAudioSettings();
+};
+document.getElementById('pause-audio-btn').onclick = () => {
+    audioPrevScreen = 'pause-menu';
+    document.getElementById('pause-menu').classList.add('hidden');
+    document.getElementById('audio-settings-screen').classList.remove('hidden');
+    renderAudioSettings();
+};
+document.getElementById('close-audio-btn').onclick = () => {
+    document.getElementById('audio-settings-screen').classList.add('hidden');
+    document.getElementById(audioPrevScreen).classList.remove('hidden');
+    document.getElementById(audioPrevScreen === 'pause-menu' ? 'pause-audio-btn' : 'open-audio-btn').focus?.();
+    syncPauseAndLoop();
 };
 
+document.getElementById('reroll-btn').onclick = () => {
+    if (!state.player || activeChoiceType !== 'levelup' || currentChoiceResolved || state.player.rerollCharges <= 0) return;
+    state.player.rerollCharges--;
+    playSound('powerUp');
+    renderUpgradeChoices();
+};
+
+document.getElementById('banish-btn').onclick = () => {
+    if (activeChoiceType !== 'levelup' || currentChoiceResolved) return;
+    banishMode = !banishMode;
+    updateLevelUpControls();
+};
+
+document.getElementById('skip-btn').onclick = () => {
+    if (!state.player || activeChoiceType !== 'levelup' || currentChoiceResolved) return;
+    currentChoiceResolved = true;
+    state.player.heal(40);
+    processNextPendingChoice();
+};
+
+export function getXpDiagnosticReport() {
+    return formatXpDiagnosticReport();
+}
+
+export function copyXpDiagnosticReport() {
+    const report = formatXpDiagnosticReport();
+    const diagBox = document.getElementById('xp-diagnostic-box');
+    if (diagBox) {
+        diagBox.textContent = report;
+        diagBox.classList.remove('hidden');
+    }
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(report).catch(() => {});
+    }
+    if (state.player && state.isRunning && !state.isPaused) {
+        state.texts.push(floatTextPool.acquire(state.player.x, state.player.y - 75, 'СВОДКА XP ГОТОВА [F9]', '#00ffff', 18));
+    }
+    return report;
+}
+
+if (typeof window !== 'undefined') {
+    window.getXpReport5m = getXpDiagnosticReport;
+    window.copyXpReport5m = copyXpDiagnosticReport;
+}
+
 window.addEventListener('keydown', e => {
-    if (e.code === 'Tab') {
+    if (e.code === 'F9' && state.player) {
         e.preventDefault();
-        toggleAbilities();
+        copyXpDiagnosticReport();
         return;
     }
-    
-    if (e.code === 'Escape') {
-        const overlay = document.getElementById('abilities-overlay');
-        if (!overlay.classList.contains('hidden')) {
-            toggleAbilities();
-        } else {
-            togglePause();
+    if (!state.isRunning) {
+        if (e.code === 'Escape' && !e.repeat) {
+            if (!document.getElementById('audio-settings-screen').classList.contains('hidden')) {
+                document.getElementById('close-audio-btn').click();
+            } else if (stationPage === 'database-screen' && document.getElementById('archive-query').value) {
+                const search = document.getElementById('archive-query');
+                search.value = '';
+                search.oninput();
+                search.focus();
+            } else if (stationPage !== 'overlay-screen') {
+                const nav = stationPages[stationPage];
+                openStation('overlay-screen');
+                document.getElementById(nav).focus?.();
+            }
+            e.preventDefault();
         }
         return;
     }
+    const build = document.getElementById('abilities-overlay');
+    if (e.code === 'Tab' && !build.classList.contains('hidden')) {
+        const stops = build.querySelectorAll('button,summary');
+        const first = stops[0], last = stops[stops.length-1];
+        if (stops.length && ((e.shiftKey && document.activeElement === first) || (!e.shiftKey && document.activeElement === last))) {
+            e.preventDefault();
+            (e.shiftKey ? last : first).focus();
+        }
+        return;
+    }
+    if (e.code === 'Tab' && !activeChoiceType && !manualPauseActive) {
+        e.preventDefault();
+        if (e.repeat) return;
+        toggleAbilities();
+        return;
+    }
 
-    if (e.code === 'KeyW') keys.w = true;
-    if (e.code === 'KeyS') keys.s = true;
-    if (e.code === 'KeyA') keys.a = true;
-    if (e.code === 'KeyD') keys.d = true;
+    if (e.code === 'Escape') {
+        if (e.repeat) return;
+        togglePause();
+        return;
+    }
 
-    if (state.isPaused || !state.isRunning) return;
+    if (state.isPaused) return;
+    if (e.code === 'KeyW' || e.code === 'ArrowUp') keys.w = true;
+    if (e.code === 'KeyS' || e.code === 'ArrowDown') keys.s = true;
+    if (e.code === 'KeyA' || e.code === 'ArrowLeft') keys.a = true;
+    if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.d = true;
 
-    if (e.code === 'Space') state.player?.useDash();
+    if (e.code === 'KeyM') {
+        const active = RadarSystem.toggle();
+        document.getElementById('btn-radar')?.classList.toggle('active', active);
+    }
+    if (e.code === 'Space' && e.target?.tagName !== 'BUTTON') { e.preventDefault(); state.player?.useDash(); }
     if (e.code === 'KeyE') state.player?.useEmp();
 });
 
 window.addEventListener('keyup', e => {
-    if (e.code === 'KeyW') keys.w = false;
-    if (e.code === 'KeyS') keys.s = false;
-    if (e.code === 'KeyA') keys.a = false;
-    if (e.code === 'KeyD') keys.d = false;
+    if (e.code === 'KeyW' || e.code === 'ArrowUp') keys.w = false;
+    if (e.code === 'KeyS' || e.code === 'ArrowDown') keys.s = false;
+    if (e.code === 'KeyA' || e.code === 'ArrowLeft') keys.a = false;
+    if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.d = false;
 });
 
 window.addEventListener('blur', () => {
+    clearStick();
     keys.w = false;
     keys.a = false;
     keys.s = false;
@@ -701,10 +970,19 @@ window.addEventListener('blur', () => {
     mouse.active = false;
 });
 
-window.addEventListener('mousemove', e => {
-    mouse.x = e.clientX;
-    mouse.y = e.clientY;
+function aimAtPointer(event) {
+    if (!state.isRunning || state.isPaused) return;
+    mouse.x = event.clientX;
+    mouse.y = event.clientY;
     mouse.active = true;
+}
+canvas.addEventListener('pointermove', event => {
+    if (event.pointerType !== 'touch' || event.buttons) aimAtPointer(event);
+});
+canvas.addEventListener('pointerdown', aimAtPointer);
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden && state.isRunning && !state.isPaused) togglePause();
 });
 
 window.addEventListener('resize', () => {
@@ -719,13 +997,53 @@ document.getElementById('start-btn').onclick = () => {
     document.getElementById('overlay-screen').classList.add('hidden');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    if (animationId) cancelAnimationFrame(animationId);
+    stopGameLoop();
     init();
     state.isRunning = true;
-    gameLoop();
+    canvas.focus?.({preventScroll:true});
+    syncPauseAndLoop();
 };
 
 document.getElementById('btn-pause').onclick = togglePause;
 document.getElementById('resume-btn').onclick = togglePause;
+const pauseXpReportBtn = document.getElementById('pause-xp-report-btn');
+if (pauseXpReportBtn) {
+    pauseXpReportBtn.onclick = () => {
+        copyXpDiagnosticReport();
+    };
+}
+
+const radarBtn = document.getElementById('btn-radar');
+if (radarBtn) {
+    radarBtn.onclick = () => {
+        const active = RadarSystem.toggle();
+        radarBtn.classList.toggle('active', active);
+    };
+}
+
+document.getElementById('skill-dash')?.addEventListener('click', () => {
+    if (state.isRunning && !state.isPaused) state.player?.useDash();
+});
+document.getElementById('skill-emp')?.addEventListener('click', () => {
+    if (state.isRunning && !state.isPaused) state.player?.useEmp();
+});
+
+function syncAutoAimToggles() {
+    const val = !!Meta.data.autoAim;
+    document.getElementById('autoaim-toggle-start').checked = val;
+    document.getElementById('autoaim-toggle-pause').checked = val;
+}
+
+document.getElementById('autoaim-toggle-start').onchange = (e) => {
+    Meta.setAutoAim(e.target.checked);
+    syncAutoAimToggles();
+};
+document.getElementById('autoaim-toggle-pause').onchange = (e) => {
+    Meta.setAutoAim(e.target.checked);
+    syncAutoAimToggles();
+};
 
 Meta.load();
+syncAutoAimToggles();
+initAudioUI();
+openStation('overlay-screen');

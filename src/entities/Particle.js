@@ -1,7 +1,12 @@
 import { state } from '../GameState.js';
+import { ObjectPool } from '../Pool.js';
 
 export class Particle {
     constructor(x, y, c, s) {
+        this.reset(x, y, c, s);
+    }
+
+    reset(x, y, c, s) {
         this.x = x;
         this.y = y;
         this.c = c;
@@ -9,6 +14,8 @@ export class Particle {
         this.vx = (Math.random() - 0.5) * 5;
         this.vy = (Math.random() - 0.5) * 5;
         this.life = 1;
+        this.active = true;
+        return this;
     }
 
     update() {
@@ -26,14 +33,22 @@ export class Particle {
     }
 }
 
+export const particlePool = new ObjectPool((x, y, c, s) => new Particle(x, y, c, s));
+
 export class FloatText {
     constructor(x, y, t, c, fontSize = 14) {
+        this.reset(x, y, t, c, fontSize);
+    }
+
+    reset(x, y, t, c, fontSize = 14) {
         this.x = x;
         this.y = y;
         this.t = t;
         this.c = c;
         this.life = 60;
         this.fontSize = fontSize;
+        this.active = true;
+        return this;
     }
 
     update() {
@@ -45,8 +60,10 @@ export class FloatText {
         ctx.save();
         ctx.globalAlpha = this.life / 60;
         ctx.fillStyle = this.c;
-        ctx.font = `${this.fontSize}px 'Russo One', sans-serif`;
+        ctx.font = `900 ${this.fontSize}px 'Orbitron', sans-serif`;
         ctx.fillText(this.t, this.x - state.camera.x, this.y - state.camera.y);
         ctx.restore();
     }
 }
+
+export const floatTextPool = new ObjectPool((x, y, t, c, fontSize) => new FloatText(x, y, t, c, fontSize));

@@ -1,5 +1,58 @@
 export const WORLD_SIZE = 10000;
 
+export const BALANCE = {
+
+    startGraceSeconds: 6,
+    cargoCooldownTicks: 75 * 60,
+
+    spawnRateByPhase: {
+        calm: 100,
+        build: 65,
+        peak: 40
+    },
+
+    earlyMercy: {
+        durationSec: 95,
+        minMultiplier: 0.4
+    },
+
+    earlyPackCap: {
+        durationSec: 95,
+        maxPackSize: 2
+    },
+
+    difficultyRamp: {
+        maxDifficulty: 6,
+        easeSeconds: 240,
+        powerPerDifficultyPoint: 45
+    },
+
+    earlyPlayerBuff: {
+        dodgeBonus: 0.22
+    },
+
+    hitIframeFrames: 18,
+
+    earlyAliveCap: {
+        startCap: 7,
+        rampSeconds: 240
+    },
+
+    maxPacksPerFrameEarly: {
+        durationSec: 60,
+        cap: 1
+    },
+
+    spawnTelegraphFrames: 30,
+
+    cardWeighting: {
+        ownedBonus: 3,
+        recipeProgressBonus: 2,
+        evoRequireBonus: 2,
+        cardsShown: 4
+    }
+};
+
 export const SCREEN_W = () => window.innerWidth;
 export const SCREEN_H = () => window.innerHeight;
 
@@ -10,27 +63,141 @@ export const BIOME_COLORS = {
     wasteland: '#0f0505'
 };
 
+export const BESTIARY_DB = {
+    basic:         { name: 'Пехотинец',  model: 'ШТУРМ-01',  lore: 'Массовая штамповка корпорации. Дёшев, слаб поодиночке, опасен только числом.' },
+    runner:        { name: 'Бегун',      model: 'СПРИНТ-02', lore: 'Облегчённый каркас без брони - вся масса ушла в сервоприводы ног.' },
+    shooter:       { name: 'Стрелок',    model: 'ДИСТАНС-03',lore: 'Держит дистанцию и бьёт по прямой видимости - не подпускай его к укрытиям.' },
+    kamikaze:      { name: 'Камикадзе',  model: 'ФУГАС-04',  lore: 'Начинён нестабильной взрывчаткой. Замирает и мигает перед детонацией - это твой шанс уйти.' },
+    tank:          { name: 'Танк',       model: 'БАСТИОН-05',lore: 'Толстая броня спереди, почти не разгоняется - обходи с флангов.' },
+    dasher:        { name: 'Дэшер',      model: 'РЫВОК-06',  lore: 'Копит энергию и раз в несколько секунд идёт на таран на утроенной скорости.' },
+    elite:         { name: 'Элита',      model: 'ОФИЦЕР-07', lore: 'Командная модель. Прочнее и опаснее рядовых юнитов на голову.' },
+    spitter:       { name: 'Плевун',     model: 'ТОКСИН-08', lore: 'Заливает сектор едкой кислотой, создавая смертоносные зоны замедления.' },
+    stalker:       { name: 'Сталкер',    model: 'ФАНТОМ-09', lore: 'Оснащен маскировочным полем. Обходит с тыла и наносит внезапный критический удар.' },
+    shield_bearer: { name: 'Щитовик',    model: 'ЭГИДА-10',  lore: 'Разворачивает лобовой энерго-щит, поглощающий прямые фронтальные попадания.' },
+    swarmer:       { name: 'Роевик',     model: 'ИНСЕКТ-11', lore: 'Микро-робот улья. Атакует стаями, стремясь задавить числом и скоростью.' },
+    titan:         { name: 'Титан',      model: 'КОЛОСС-00', lore: 'Экспериментальный прототип. Захватывает игрока в ловушку и периодически впадает в ярость, усиливая всех рядом.' }
+};
+
+export const ENEMY_LABELS = Object.fromEntries(
+    Object.entries(BESTIARY_DB).map(([key, def]) => [key, def.name])
+);
+ENEMY_LABELS.barrel = 'Взрывная бочка';
+
+export const ACHIEVEMENTS_DB = {
+    first_blood:     { id: 'first_blood',     name: 'Первая кровь',      icon: '🎯', desc: 'Уничтожить первого противника', reward: 50 },
+    massacre_100:    { id: 'massacre_100',    name: 'Мясной шторм',      icon: '⚡', desc: 'Уничтожить 100 врагов за 10 секунд', reward: 300 },
+    clutch_survivor: { id: 'clutch_survivor', name: 'На волоске',        icon: '💓', desc: 'Выжить 15 секунд с уровнем HP ниже 15%', reward: 250 },
+    titan_speedkill: { id: 'titan_speedkill', name: 'Убийца колоссов',   icon: '💀', desc: 'Уничтожить Титана менее чем за 20 секунд', reward: 400 },
+    vacuum_rush:     { id: 'vacuum_rush',     name: 'Вакуумный коллапс', icon: '🌀', desc: 'Собрать 50 чипов или кристаллов за 3 секунды', reward: 200 },
+    singularity:     { id: 'singularity',     name: 'Сингулярность',     icon: '🧬', desc: 'Активировать супер-эволюцию оружия', reward: 350 },
+    pacifist:        { id: 'pacifist',        name: 'Пацифист',          icon: '🕊️', desc: 'Продержаться 2 минуты, не убив ни одного врага', reward: 150 },
+    tank:            { id: 'tank',            name: 'Живой бастион',     icon: '🛡️', desc: 'Получить 1000 урона за один забег и выжить', reward: 150 },
+    untouchable:     { id: 'untouchable',     name: 'Неприкасаемый',     icon: '👁️', desc: 'Убить Титана, не получив ни единого урона за забег', reward: 500 }
+};
+
 export const SKILL_DB = {
-    multi: { name: "Мульти-выстрел", desc: "+1 Пуля к залпу", max: 5, type: "weapon", evolveAt: 3, evoDesc: "Плазменный веер" },
-    rear: { name: "Задняя турель", desc: "+1 Пуля назад", max: 5, type: "weapon", evolveAt: 3, evoDesc: "Широкий калибр" },
-    aura: { name: "Электро-Аура", desc: "Частота ударов выше", max: 5, type: "active", evolveAt: 3, evoDesc: "Штормовое поле" },
-    orbit: { name: "Дроны-Защитники", desc: "+1 Спутник", max: 5, type: "active", evolveAt: 3, evoDesc: "Лазерная связь" },
-    thorns: { name: "Шипы", desc: "Возврат урона", max: 5, type: "passive", evolveAt: 3, evoDesc: "Энерго-щит" },
-    boom: { name: "Взрыв трупов", desc: "Радиус и Урон взрыва", max: 5, type: "passive", evolveAt: 3, evoDesc: "Цепная реакция" },
-    mines: { name: "Миноукладчик", desc: "+1 Мина в кассете", max: 5, type: "active", evolveAt: 3, evoDesc: "Кластерные бомбы" },
-    laser: { name: "Авто-Лазер", desc: "+1 Луч (Мульти-таргет)", max: 5, type: "active", evolveAt: 3, evoDesc: "Испепелитель" },
-    freeze: { name: "Крио-модуль", desc: "Радиус замедления", max: 5, type: "active", evolveAt: 3, evoDesc: "Вечная мерзлота" },
-    dmg: { name: "Усилитель Урона", desc: "Урон +20%", max: 10, type: "passive" },
-    spd: { name: "Скорострельность", desc: "Задержка -15%", max: 10, type: "passive" },
-    sniper: { name: "Снайпер", desc: "Скорость пуль +25%", max: 5, type: "passive" },
-    crit: { name: "Крит. Модуль", desc: "Шанс крита +10%", max: 5, type: "passive", evolveAt: 3, evoDesc: "Смертельные удары" },
-    hp: { name: "Нано-Броня", desc: "Макс HP +20", max: 5, type: "passive" },
-    regen: { name: "Регенерация", desc: " +2 HP/сек", max: 5, type: "passive", evolveAt: 3, evoDesc: "Быстрое восстановление" },
-    shield: { name: "Энерго-Щит", desc: "Блок + Взрыв щита", max: 5, type: "passive", evolveAt: 3, evoDesc: "Быстрая зарядка" },
-    armor: { name: "Броня", desc: "Урон по вам -2", max: 5, type: "passive" },
-    dodge: { name: "Уклонение", desc: "Уворот +10%", max: 5, type: "passive" },
-    speed: { name: "Приводы", desc: "Скорость +10%", max: 5, type: "passive" },
-    vamp: { name: "Вампиризм", desc: "5% шанс лечить 5 HP", max: 5, type: "passive" },
-    mag: { name: "Магнит", desc: "Радиус сбора +40%", max: 5, type: "passive" },
-    exp: { name: "Нейро-Линк", desc: "Опыт +20%", max: 5, type: "passive" }
+    multi: {
+        name: "Мульти-выстрел",
+        desc: "Бластер выпускает веер пуль. Каждый уровень добавляет одну пулю и уменьшает урон отдельного попадания.",
+        max: 5,
+        type: "weapon",
+        evolveTo: "gatling",
+        require: "spd"
+    },
+    rear: {
+        name: "Задняя турель",
+        desc: "Турель стреляет против движения. Когда корабль стоит, залп уходит в сторону, противоположную прицелу.",
+        max: 5,
+        type: "weapon",
+        evolveTo: "fortress",
+        require: "armor"
+    },
+    fatboy: {
+        name: "Толстяк",
+        desc: "Передние пули становятся крупнее, наносят больше урона и отбрасывают цель. Вблизи отброс сильнее.",
+        max: 5,
+        type: "weapon",
+        evolveTo: "blackhole",
+        require: "dmg"
+    },
+    boomerang: {
+        name: "Бумеранг",
+        desc: "Клинок летит сквозь препятствия и возвращается к кораблю. На обратном пути может снова ранить ту же цель.",
+        max: 5,
+        type: "weapon",
+        evolveTo: "thunder_blade",
+        require: "mag"
+    },
+    katana: {
+        name: "Катана",
+        desc: "Взмах отталкивает видимых врагов перед кораблём. С 3-го уровня две дуги накрывают более широкий участок.",
+        max: 5,
+        type: "weapon",
+        evolveTo: "dimension_cut",
+        require: "speed"
+    },
+
+    plasma_shot: {
+        name: "Плазмомет",
+        desc: "Шар взрывается при первом попадании во врага или стену. Прямая цель получает удар, а видимые из точки взрыва соседи — урон по площади.",
+        max: 5,
+        type: "weapon",
+        evolveTo: "supernova",
+        require: "hp"
+    },
+    cryo_beam: {
+        name: "Крио-луч",
+        desc: "Веер ледяных осколков замедляет задетых врагов. Тяжёлые противники сохраняют больше скорости.",
+        max: 5,
+        type: "weapon",
+        evolveTo: "absolute_zero",
+        require: "shield"
+    },
+
+    gatling: { name: "Миниган", desc: "Заменяет веер «Мульти-выстрела» частыми одиночными пулями. Пуля летит в полтора раза быстрее.", max: 1, type: "evo" },
+    fortress: { name: "Крепость", desc: "Турель прикрывает тыл пятью крупными ядрами. Их легче провести по широкой группе. Отброс слабеет с расстоянием.", max: 1, type: "evo" },
+    blackhole: { name: "Черная дыра", desc: "Отдельная пушка выпускает воронку. Она стягивает видимых врагов и один раз ранит каждого ядром. Передние пули теряют усиление «Толстяка».", max: 1, type: "evo" },
+    thunder_blade: { name: "Громовой клинок", desc: "При попадании клинок бьёт разрядом до двух соседних врагов. Разряд срабатывает один раз на пути туда и один раз на обратном пути.", max: 1, type: "evo" },
+    dimension_cut: { name: "Разрез Измерения", desc: "Три дуги могут поразить врагов за стеной. Перекрытие дуг расширяет зону взмаха, каждая цель получает один удар.", max: 1, type: "evo" },
+    supernova: { name: "Сверхновая", desc: "Взрыв охватывает больший радиус и тянет соседних врагов к точке удара. Стены укрывают от взрыва.", max: 1, type: "evo" },
+    absolute_zero: { name: "Абсолютный Ноль", desc: "Пять осколков замедляют врагов. Если цель была охлаждена до первого попадания этого залпа, раскол наносит ей дополнительный урон один раз.", max: 1, type: "evo" },
+
+    aura: { name: "Электро-Аура", desc: "Поле замедляет видимых врагов вокруг корабля. Импульс отталкивает их и наносит урон, часть которого зависит от максимального здоровья цели.", max: 5, type: "active", evolveTo: "blood_circle", require: "regen" },
+    orbit: { name: "Дроны-Защитники", desc: "Спутники бьют врагов при касании. Каждый спутник может снова ударить ту же цель после короткой задержки. Стены заслоняют удар.", max: 5, type: "active", evolveTo: "neural", require: "exp" },
+    mines: { name: "Миноукладчик", desc: "Мины тянутся к ближайшему видимому врагу и взрываются вблизи. С 4-го уровня основная мина оставляет три малые.", max: 5, type: "active", evolveTo: "vacuum", require: "mag" },
+    laser: { name: "Авто-Лазер", desc: "Лазер мгновенно поражает сразу несколько ближайших видимых врагов. За укрытием враг выходит из-под огня.", max: 5, type: "active", evolveTo: "deathray", require: "sniper" },
+    nanite_swarm: { name: "Рой Нанитов", desc: "Самонаводящиеся наниты преследуют видимых врагов. Каждое попадание снижает сопротивление цели отбросу.", max: 5, type: "active", evolveTo: "devourer", require: "vamp" },
+    tesla: { name: "Тесла-Катушка", desc: "Катушка одновременно бьёт разрядами нескольких видимых врагов в радиусе действия.", max: 5, type: "active" },
+
+    blood_circle: { name: "Кровавый круг", desc: "Расширяет ауру. Каждое убийство её импульсом даёт 25% шанса восстановить 3 HP. Один импульс может вылечить один раз.", max: 1, type: "evo" },
+    neural: { name: "Нейро-Дроны", desc: "Спутники вращаются быстрее и дальше от корабля. Каждый из них быстрее наносит повторный удар по одной цели.", max: 1, type: "evo" },
+    vacuum: { name: "Вакуумные мины", desc: "Основные мины находят цель с большей дистанции, быстрее подлетают и стягивают врагов при взрыве. Малые мины сохраняют обычное наведение.", max: 1, type: "evo" },
+    deathray: { name: "Луч Смерти", desc: "Вместо мгновенных попаданий по пяти целям лазер чаще посылает до двух лучей. Каждый прошивает врагов по пути до стены.", max: 1, type: "evo" },
+    devourer: { name: "Пожиратель", desc: "Наниты чаще атакуют. Убийство самим нанитом восстанавливает 2 HP, общее время между лечениями роя — 0,2 с.", max: 1, type: "evo" },
+
+    dmg: { name: "Усилитель Урона", desc: "Каждый уровень добавляет 25% базового урона оружия. Бонусы корпуса и мастерской умножают результат.", max: 10, type: "passive" },
+    spd: { name: "Скорострельность", desc: "До 6-го уровня ускоряет бластер, заднюю турель и гравипушку. До 10-го уровня сокращает паузы между атаками ауры, мин и другого автооружия с перезарядкой.", max: 10, type: "passive" },
+    sniper: { name: "Снайпер", desc: "Ускоряет пули бластера, турели и воронку. На нечётных уровнях добавляет пробивание, на чётных — отскок пуль от стены.", max: 5, type: "passive" },
+    crit: { name: "Крит. Модуль", desc: "Каждый уровень добавляет 10 процентных пунктов к шансу критического попадания оружием. Крит удваивает урон.", max: 5, type: "passive" },
+    hp: { name: "Нано-Броня", desc: "Каждый уровень добавляет 20% исходного запаса здоровья корпуса с улучшениями мастерской. Полученный прирост сразу восстанавливает столько же HP.", max: 5, type: "passive" },
+    regen: { name: "Регенерация", desc: "Каждый уровень восстанавливает за секунду 2 HP и ещё 0,25% максимального здоровья. Ремонт мастерской прибавляется к этому лечению.", max: 5, type: "passive" },
+    shield: { name: "Энерго-Щит", desc: "Заряд поглощает удар и отбрасывает врагов ответным взрывом. Заряды восстанавливаются по одному. На 5-м уровне появляется второй.", max: 5, type: "passive" },
+    armor: { name: "Броня", desc: "Каждый уровень снимает 3 единицы с входящего урона и добавляет 3 п. п. сопротивления. Сопротивление уменьшает оставшийся урон максимум на 60%.", max: 5, type: "passive" },
+    dodge: { name: "Уклонение", desc: "Даёт по 8 п. п. шанса избежать урона за уровень. С учётом корпуса и стартовой защиты шанс ограничен 50%.", max: 5, type: "passive" },
+    speed: { name: "Приводы", desc: "Каждый уровень добавляет 10% базовой скорости движения корпуса с улучшениями мастерской.", max: 5, type: "passive" },
+    vamp: { name: "Вампиризм", desc: "Убийство может восстановить здоровье. Каждый уровень добавляет 12 п. п. шанса и усиливает лечение. Между срабатываниями проходит минимум 0,4 с.", max: 5, type: "passive" },
+    mag: { name: "Магнит", desc: "Каждый уровень на 50 пикселей увеличивает расстояние, с которого корабль притягивает чипы и кристаллы опыта.", max: 5, type: "passive" },
+    exp: { name: "Нейро-Линк", desc: "Каждый уровень добавляет 20% базового опыта при подборе кристаллов, в том числе за Титана и конвой.", max: 5, type: "passive" }
+};
+
+export const WEAPON_INTERVALS = {
+    aura: level => Math.max(12, 45 - (level * 5)),
+    mines: level => Math.max(51, 91 - (level * 6)),
+    laser: level => Math.max(28, 78 - (level * 10)),
+    tesla: level => Math.max(31, 71 - (level * 8)),
+    katana: level => Math.max(27, 42 - (level * 3)),
+    boomerang: level => Math.max(31, 61 - (level * 5)),
+    plasma_shot: level => Math.max(41, 76 - level * 7),
+    cryo_beam: level => Math.max(28, 48 - level * 4),
+    nanite_swarm: level => Math.max(21, 61 - level * 7)
 };
